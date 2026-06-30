@@ -248,7 +248,7 @@ function scorePersonal(d, s) {
   const debtRatio = d.ingresosPersonales ? d.catTotals.deuda / d.ingresosPersonales : 0;
   p = clamp(1 - debtRatio / 0.4, 0, 1);
   dims.push({ name: 'Carga de deuda', max: 20, pct: p, pts: p * 20,
-    note: `Deuda = ${fmtPct(debtRatio)} de tu ingreso (Icetex + tarjeta)` });
+    note: `Deuda = ${fmtPct(debtRatio)} de tu ingreso (créditos + tarjeta)` });
   const fixed = d.catTotals.vivienda + d.catTotals.fijo + d.catTotals.deuda + d.catTotals.suscripcion;
   const fixedRatio = d.ingresosPersonales ? fixed / d.ingresosPersonales : 0;
   p = clamp((1.0 - fixedRatio) / 0.5, 0, 1);
@@ -489,7 +489,7 @@ function renderResumen() {
       <span class="ksub">Para cubrir tu vida necesitás <b>${fmtShort(d.salaryToCoverLife)}</b> ${gap > 0 ? `· faltan ${fmtShort(gap)}` : '· ya lo cubre'}</span>
     </div>
     <div class="card kpi--dark kpi">
-      <span class="klabel">Fondo crecimiento Skandia</span>
+      <span class="klabel">Fondo de crecimiento</span>
       <span class="kval">${fmtCOP(d.fondoCrecimiento)}</span>
       <span class="ksub">Capital tras reserva. Aún no recibido</span>
     </div>
@@ -499,8 +499,8 @@ function renderResumen() {
     <div class="card pad-lg">
       <div class="card-h"><h3>Empresa vs. bolsillo personal · 12 meses</h3><span class="eyebrow">Caja</span></div>
       <div id="chart-overview"></div>
-      <div class="legend"><div class="li"><span class="sw" style="background:#004643"></span>Caja empresa (con Skandia)</div><div class="li"><span class="sw" style="background:#B85C38"></span>Caja personal (runway)</div></div>
-      <p class="card-note">La caja de la empresa sube sola; tu caja personal baja cada mes desde tus ahorros. Skandia entra como capital aparte, no a tu bolsillo.</p>
+      <div class="legend"><div class="li"><span class="sw" style="background:#004643"></span>Caja empresa (con proyecto)</div><div class="li"><span class="sw" style="background:#B85C38"></span>Caja personal (runway)</div></div>
+      <p class="card-note">La caja de la empresa sube sola; tu caja personal baja cada mes desde tus ahorros. El proyecto único entra como capital aparte, no a tu bolsillo.</p>
     </div>
     <div class="card">
       <div class="card-h"><h3>Salud financiera</h3></div>
@@ -527,7 +527,7 @@ function renderResumen() {
 function statusCallouts(d) {
   const out = [];
   if (d.selfFinances) {
-    out.push(`<div class="callout callout--ok span-2"><span class="ci">✓</span><div class="ct"><b>Operación recurrente sana.</b> Petcol + F&M cubren equipo, herramientas y tu salario de ${fmtShort(d.ceoSalary)}, y dejan ${fmtCOP(d.resultOperativo)} de excedente al mes. La empresa no es el problema.</div></div>`);
+    out.push(`<div class="callout callout--ok span-2"><span class="ci">✓</span><div class="ct"><b>Operación recurrente sana.</b> Tus ingresos recurrentes cubren equipo, herramientas y tu salario de ${fmtShort(d.ceoSalary)}, y dejan ${fmtCOP(d.resultOperativo)} de excedente al mes. La empresa no es el problema.</div></div>`);
   } else {
     out.push(`<div class="callout callout--warn span-2"><span class="ci">!</span><div class="ct"><b>La operación aún no cubre tu salario.</b> Faltan ${fmtCOP(d.breakEvenCEO - d.ingresosNetos)} de ingreso neto recurrente para sostener ${fmtShort(d.ceoSalary)}/mes.</div></div>`);
   }
@@ -555,7 +555,7 @@ function renderEmpresa() {
 
   const beChip = d.selfFinances ? `<span class="chip chip--ok"><span class="cdot"></span>Por encima del equilibrio</span>` : `<span class="chip chip--warn"><span class="cdot"></span>Por debajo</span>`;
 
-  el.innerHTML = head('02', 'Empresa', 'P&L recurrente mes a mes, sin Skandia (que es proyecto único). Tu punto de equilibrio y el avance hacia la meta de facturación.') + `
+  el.innerHTML = head('02', 'Empresa', 'P&L recurrente mes a mes, sin el proyecto único. Tu punto de equilibrio y el avance hacia la meta de facturación.') + `
   <div class="grid g-4">
     <div class="card kpi"><span class="klabel">Ingresos netos / mes</span><span class="kval">${fmtCOP(d.ingresosNetos)}</span><span class="ksub">${d.nClients} clientes recurrentes</span></div>
     <div class="card kpi"><span class="klabel">Costos operativos</span><span class="kval">${fmtCOP(d.opex)}</span><span class="ksub">Equipo ${fmtShort(d.nomina)} + herramientas ${fmtShort(d.suscripciones)}</span></div>
@@ -593,7 +593,7 @@ function renderEmpresa() {
     <div id="chart-fact"></div>
     <div class="grid g-3 mt-16">
       <div class="insight"><div class="il">Facturado real 2026</div><div class="iv">${fmtShort(d.realized)}</div><div class="id">${fmtPct(d.realizedPct)} de la meta</div></div>
-      <div class="insight"><div class="il">Run-rate proyectado</div><div class="iv">${fmtShort(d.runRate)}</div><div class="id">Petcol+F&M ×12 + Skandia</div></div>
+      <div class="insight"><div class="il">Run-rate proyectado</div><div class="iv">${fmtShort(d.runRate)}</div><div class="id">Recurrente ×12 + proyecto único</div></div>
       <div class="insight"><div class="il">Meta 2026</div><div class="iv">${fmtShort(s.global.billingGoal)}</div><div class="id">Brecha ${fmtShort(s.global.billingGoal - d.runRate)}</div></div>
     </div>
   </div>`;
@@ -685,7 +685,7 @@ function projResultsHTML(d, s, p) {
     </div>
     <div class="grid g-3 mt-16">
       <div class="insight"><div class="il">Runway personal</div><div class="iv">${p.runwayEnd ? 'Mes ' + p.runwayEnd : 'No se agota'}</div><div class="id">${p.runwayEnd ? `Se agota en ${esc(p.months[p.runwayEnd - 1])}` : 'Tu caja personal aguanta los 12 meses'}</div></div>
-      <div class="insight"><div class="il">Caja empresa a 12m</div><div class="iv">${fmtShort(p.arrET[11])}</div><div class="id">Operativa + Skandia${s.skandia.phase2On ? ' + Fase 2' : ''}</div></div>
+      <div class="insight"><div class="il">Caja empresa a 12m</div><div class="iv">${fmtShort(p.arrET[11])}</div><div class="id">Operativa + proyecto${s.skandia.phase2On ? ' + Fase 2' : ''}</div></div>
       <div class="insight"><div class="il">Salario máx. sostenible</div><div class="iv">${fmtShort(p.maxSalary)}</div><div class="id">Con los clientes del escenario</div></div>
     </div>
     <div class="card mt-16"><div class="card-h"><h3>Detalle mensual</h3></div>
@@ -722,7 +722,7 @@ function renderProyecciones() {
     <span class="tl">${esc(t.name)} · ${fmtShort(t.pay)}</span>
     <span style="display:flex;align-items:center"><input type="checkbox" data-projinc="${t.id}" ${t.projInclude !== false ? 'checked' : ''}><span class="tr"></span></span></label>`).join('');
 
-  el.innerHTML = head('05', 'Proyecciones', 'Mové las palancas y mirá cómo cambian tu caja y tu runway a 12 meses. Crecer clientes, prender Skandia Fase 2, subir tu salario, contratar o soltar gente.') + `
+  el.innerHTML = head('05', 'Proyecciones', 'Mové las palancas y mirá cómo cambian tu caja y tu runway a 12 meses. Crecer clientes, prender el proyecto Fase 2, subir tu salario, contratar o soltar gente.') + `
   <div class="grid g-21">
     <div class="card"><div class="card-h"><h3>Palancas</h3><span class="eyebrow">Escenario</span></div>
 
@@ -732,7 +732,7 @@ function renderProyecciones() {
       </div>
       <div class="divider"></div>
 
-      <div class="switchrow"><div><div class="sn">Skandia Fase 2</div><div class="sm" id="p2Summary">${fmtShort(s.skandia.phase2Value)} · entra en mes ${s.skandia.phase2Month}</div></div>
+      <div class="switchrow"><div><div class="sn">Proyecto Fase 2</div><div class="sm" id="p2Summary">${fmtShort(s.skandia.phase2Value)} · entra en mes ${s.skandia.phase2Month}</div></div>
         <label class="toggle"><input type="checkbox" id="tglPhase2" ${s.skandia.phase2On ? 'checked' : ''}><span class="tr"></span></label></div>
       <div id="phase2Cfg" ${s.skandia.phase2On ? '' : 'hidden'}>
         <div class="ctrl mt-8"><div class="ctrl-h"><label>Valor Fase 2</label><span class="cval" id="cvalP2val">${fmtShort(s.skandia.phase2Value)}</span></div>
@@ -774,7 +774,7 @@ function renderEditor() {
     <div class="grid g-4">
       ${repeatField('TRM (COP/USD)', g.trm, 'global.trm')}
       ${repeatField('Salario CEO sostenible', g.ceoSalary, 'global.ceoSalary')}
-      ${repeatField('Top-up Skandia al salario', g.ceoTopupSkandia, 'global.ceoTopupSkandia')}
+      ${repeatField('Top-up del proyecto al salario', g.ceoTopupSkandia, 'global.ceoTopupSkandia')}
       ${repeatField('Factor prestacional', g.factorPrestacional, 'global.factorPrestacional', { step: '0.01' })}
       ${repeatField('Reserva objetivo (meses)', g.reserveMonths, 'global.reserveMonths')}
       ${repeatField('Meta facturación 2026', g.billingGoal, 'global.billingGoal')}
@@ -815,7 +815,7 @@ function renderEditor() {
     <button class="btn btn--ghost btn--sm row-add" data-add="personalExpenses">+ Agregar gasto</button>
   </div>
 
-  <div class="editor-sec card"><div class="card-h"><h3>Skandia · proyecto único</h3></div>
+  <div class="editor-sec card"><div class="card-h"><h3>Proyecto único · capital</h3></div>
     <div class="grid g-4">
       ${repeatField('Facturación total', s.skandia.total, 'skandia.total')}
       ${repeatField('Retención (%)', s.skandia.retencionPct, 'skandia.retencionPct', { step: '0.01' })}

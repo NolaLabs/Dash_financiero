@@ -8,15 +8,15 @@ Clave de acceso: **`[redactado]`**
 
 ## Qué hace
 
-- **Resumen** — KPIs principales: resultado recurrente, runway personal, salario CEO sostenible vs. salario para cubrir tu vida, fondo de crecimiento Skandia. Gráfica firma "empresa vs. bolsillo" a 12 meses.
+- **Resumen** — KPIs principales: resultado recurrente, runway personal, salario CEO sostenible vs. salario para cubrir tu vida, fondo de crecimiento del proyecto único. Gráfica firma "empresa vs. bolsillo" a 12 meses.
 - **Empresa** — P&L recurrente, estructura de costos, **punto de equilibrio** (con y sin tu salario, en pesos y en número de clientes), facturación 2026 real vs. meta.
 - **Personal** — presupuesto, cada gasto con su **% del ingreso** y semáforo de impacto, runway, y cuánto debe subir tu salario para cubrir tu vida.
 - **Salud financiera** — scoring 0–100 para empresa y para tu bolsillo, desglosado en 5 dimensiones cada uno. Tabla de impacto por gasto.
-- **Proyecciones** — palancas interactivas: crecer clientes, prender **Skandia Fase 2**, subir tu salario, contratar/soltar gente. Todo recalcula la caja y el runway en vivo.
-- **Datos · Editar** — todo editable: nº de empleados y nómina de cada uno, nº de clientes y facturación por cliente, licencias, gastos personales, saldos reales de tus dos cuentas, Skandia.
+- **Proyecciones** — palancas interactivas: crecer clientes, prender el **proyecto Fase 2**, subir tu salario, contratar/soltar gente. Todo recalcula la caja y el runway en vivo.
+- **Datos · Editar** — todo editable: nº de empleados y nómina de cada uno, nº de clientes y facturación por cliente, licencias, gastos personales, saldos reales de tus dos cuentas, proyecto único.
 - **Nube · Ajustes** — conexión a la nube, respaldo (export/import) y seguridad.
 
-Los datos iniciales vienen de `Nola_Tablero_Financiero.xlsx` (jun-2026).
+El código trae una **plantilla genérica** de arranque; tus datos reales viven en la nube (Supabase) y se cargan al iniciar sesión.
 
 ---
 
