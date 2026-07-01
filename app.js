@@ -121,6 +121,7 @@ function defaultState() {
     },
     liquidity: { cajaEmpresaHoy: 0, ahorrosPersonalesHoy: 0 },
     billing2026: { real: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    oneOffs: [],
     projection: { newClients: [], newHires: [], salaryScenario: 3000000 },
   };
 }
@@ -165,8 +166,14 @@ function compute(s) {
   const reserva = s.global.reserveMonths * opex;
   const fondoCrecimiento = skNeto - reserva;
 
+  // --- Ingresos únicos esporádicos (proyectos puntuales, ej. un dash para un cliente)
+  const oneOffs = Array.isArray(s.oneOffs) ? s.oneOffs : [];
+  const oneOffsTotal = sum(oneOffs.map(o => o.amount));
+  const oneOffsPending = sum(oneOffs.filter(o => !o.received).map(o => o.amount));
+  const oneOffsReceived = oneOffsTotal - oneOffsPending;
+
   // --- Facturación run-rate vs meta
-  const runRate = facturacionBruta * 12 + skBruto;
+  const runRate = facturacionBruta * 12 + skBruto + oneOffsTotal;
   const metaProgress = s.global.billingGoal ? runRate / s.global.billingGoal : 0;
   const realized = sum(s.billing2026.real);
   const realizedPct = s.global.billingGoal ? realized / s.global.billingGoal : 0;
@@ -198,6 +205,7 @@ function compute(s) {
     ceoSalary, resultAntesCEO, resultOperativo, margen, selfFinances,
     breakEvenCEO, breakEvenNoCEO, nClients, avgNet, clientsToBE, maxClientNet, maxClientShare,
     skBruto, skRet, skNeto, reserva, fondoCrecimiento,
+    oneOffs, oneOffsTotal, oneOffsPending, oneOffsReceived,
     runRate, metaProgress, realized, realizedPct,
     otherPersonalIncome, ingresosPersonales, expRows, gastosPersonales, resultPersonal,
     savingsRate, deficit, ahorros, runwayMonths, salaryToCoverLife, recurringNetGrowthNeeded,
@@ -274,6 +282,7 @@ function project(s, d) {
   // mes de cobro fuera de 1..12 (o en blanco) no debe hacer desaparecer el capital: lo acotamos
   const cobroMes = clamp(Math.round(Number(s.skandia.mesCobro) || 1), 1, N);
   const p2Mes = clamp(Math.round(Number(s.skandia.phase2Month) || 1), 1, N);
+  const oneOffs = Array.isArray(s.oneOffs) ? s.oneOffs : [];
 
   let cajaE = d.cajaEmpresa, cajaET = d.cajaEmpresa, cajaP = d.ahorros;
   const arrE = [], arrET = [], arrP = [], arrInflow = [], arrCapital = [];
@@ -288,6 +297,8 @@ function project(s, d) {
     let capital = 0;
     if (m === cobroMes) capital += d.skNeto;
     if (s.skandia.phase2On && m === p2Mes) capital += s.skandia.phase2Value * (1 - s.skandia.retencionPct);
+    // ingresos únicos esporádicos aún no recibidos entran en su mes
+    oneOffs.forEach(o => { if (!o.received && clamp(Math.round(Number(o.month) || 1), 1, N) === m) capital += (Number(o.amount) || 0); });
     cajaET += netOp + capital;
     cajaP += (projSalary + d.otherPersonalIncome) - d.gastosPersonales;
     arrE.push(cajaE); arrET.push(cajaET); arrP.push(cajaP); arrInflow.push(inflow); arrCapital.push(capital);
@@ -539,6 +550,19 @@ function statusCallouts(d) {
   return out.join('');
 }
 
+function oneOffTable(s, d) {
+  const list = Array.isArray(s.oneOffs) ? s.oneOffs : [];
+  if (!list.length) return `<p class="hint">Sin ingresos únicos registrados. Agregá proyectos puntuales o esporádicos (cliente, monto, mes) en <b>Datos · Editar</b> — aparecen acá, entran a tu caja proyectada y suman a tu facturación anual.</p>`;
+  const rows = list.slice().sort((a, b) => (a.month || 0) - (b.month || 0)).map(o => {
+    const chip = o.received ? `<span class="chip chip--ok"><span class="cdot"></span>Recibido</span>` : `<span class="chip chip--info"><span class="cdot"></span>Esperado</span>`;
+    const ml = MONTHS12[clamp(Math.round(Number(o.month) || 1), 1, 12) - 1];
+    return `<tr><td>${esc(o.client || '—')}</td><td>${esc(o.name || '—')}</td><td>${esc(ml)}</td><td class="r tabnum">${fmtCOP(o.amount)}</td><td>${chip}</td></tr>`;
+  }).join('');
+  return `<table class="tbl"><thead><tr><th>Cliente</th><th>Proyecto</th><th>Mes</th><th class="r">Monto</th><th>Estado</th></tr></thead>
+    <tbody>${rows}<tr class="total"><td>Total · ${list.length}</td><td></td><td></td><td class="r tabnum">${fmtCOP(d.oneOffsTotal)}</td><td></td></tr></tbody></table>
+    <p class="card-note">Recibido ${fmtCOP(d.oneOffsReceived)} · esperado ${fmtCOP(d.oneOffsPending)}. Los esperados entran a tu caja proyectada en su mes; los recibidos se asumen ya en tu saldo de empresa.</p>`;
+}
+
 function renderEmpresa() {
   const d = D, s = S;
   const el = $('#view-empresa');
@@ -593,9 +617,13 @@ function renderEmpresa() {
     <div id="chart-fact"></div>
     <div class="grid g-3 mt-16">
       <div class="insight"><div class="il">Facturado real 2026</div><div class="iv">${fmtShort(d.realized)}</div><div class="id">${fmtPct(d.realizedPct)} de la meta</div></div>
-      <div class="insight"><div class="il">Run-rate proyectado</div><div class="iv">${fmtShort(d.runRate)}</div><div class="id">Recurrente ×12 + proyecto único</div></div>
+      <div class="insight"><div class="il">Run-rate proyectado</div><div class="iv">${fmtShort(d.runRate)}</div><div class="id">Recurrente ×12 + proyecto único${d.oneOffsTotal ? ' + únicos' : ''}</div></div>
       <div class="insight"><div class="il">Meta 2026</div><div class="iv">${fmtShort(s.global.billingGoal)}</div><div class="id">Brecha ${fmtShort(s.global.billingGoal - d.runRate)}</div></div>
     </div>
+  </div>
+
+  <div class="card mt-16"><div class="card-h"><h3>Ingresos únicos · esporádicos</h3><span class="eyebrow">Proyectos puntuales</span></div>
+    ${oneOffTable(s, d)}
   </div>`;
 
   barChart($('#chart-be'), { labels: ['Ingresos netos'], values: [d.ingresosNetos], color: '#004643', refLine: d.breakEvenCEO, refLabel: 'Equilibrio', fmt: fmtShort, h: 200 });
@@ -824,6 +852,12 @@ function renderEditor() {
     </div>
   </div>
 
+  <div class="editor-sec card"><div class="card-h"><h3>Ingresos únicos · esporádicos · ${(s.oneOffs || []).length}</h3><span class="eyebrow">Proyectos puntuales</span></div>
+    <div id="ed-oneoffs"></div>
+    <button class="btn btn--ghost btn--sm row-add" data-add="oneOffs">+ Agregar ingreso único</button>
+    <div class="hint">Trabajos puntuales o esporádicos (ej. un dashboard para un cliente unipersonal). Los <b>esperados</b> entran a tu caja proyectada en su mes; los <b>recibidos</b> quedan como registro y suman a tu facturación anual.</div>
+  </div>
+
   <div class="editor-sec card"><div class="card-h"><h3>Seguimiento facturación 2026 (bruto real)</h3></div>
     <div class="grid g-4" id="ed-bill"></div>
   </div>
@@ -868,6 +902,14 @@ function renderEditor() {
     <div class="field-inline"><label>Periodo</label><select data-list="personalExpenses" data-id="${e.id}" data-field="period"><option value="monthly" ${e.period === 'monthly' ? 'selected' : ''}>Mensual</option><option value="quarterly" ${e.period === 'quarterly' ? 'selected' : ''}>Trimestral</option><option value="annual" ${e.period === 'annual' ? 'selected' : ''}>Anual</option></select></div>
     <div class="field-inline"><label>Categoría</label><select data-list="personalExpenses" data-id="${e.id}" data-field="category">${Object.keys(CATS).map(k => `<option value="${k}" ${e.category === k ? 'selected' : ''}>${CATS[k].label}</option>`).join('')}</select></div>
     <button class="iconbtn" data-del="personalExpenses" data-id="${e.id}">✕</button></div>`).join('');
+
+  $('#ed-oneoffs').innerHTML = (s.oneOffs || []).map(o => `<div class="repeat-row" style="grid-template-columns:1.3fr 1.4fr 1fr 1.1fr 1fr auto" data-row="oneOffs" data-id="${o.id}">
+    ${repeatField('Cliente', o.client, '', { type: 'text' }).replace('data-edit=""', `data-list="oneOffs" data-id="${o.id}" data-field="client"`)}
+    ${repeatField('Proyecto', o.name, '', { type: 'text' }).replace('data-edit=""', `data-list="oneOffs" data-id="${o.id}" data-field="name"`)}
+    ${repeatField('Monto', o.amount, '').replace('data-edit=""', `data-list="oneOffs" data-id="${o.id}" data-field="amount"`)}
+    <div class="field-inline"><label>Mes</label><select data-list="oneOffs" data-id="${o.id}" data-field="month">${MONTHS12.map((m, i) => `<option value="${i + 1}" ${Number(o.month) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+    <div class="field-inline"><label>Estado</label><select data-list="oneOffs" data-id="${o.id}" data-field="received"><option value="no" ${!o.received ? 'selected' : ''}>Esperado</option><option value="si" ${o.received ? 'selected' : ''}>Recibido</option></select></div>
+    <button class="iconbtn" data-del="oneOffs" data-id="${o.id}">✕</button></div>`).join('');
 
   $('#ed-bill').innerHTML = MONTHS2026.map((m, i) => `<div class="field-inline"><label>${m}</label><input class="input" type="number" value="${s.billing2026.real[i]}" data-bill="${i}"></div>`).join('');
 
@@ -979,7 +1021,10 @@ function bindEditor() {
       const list = S[inp.dataset.list]; const item = list.find(x => x.id === inp.dataset.id);
       if (!item) return;
       const f = inp.dataset.field;
-      item[f] = (inp.type === 'number') ? (parseFloat(inp.value) || 0) : inp.value;
+      if (inp.type === 'checkbox') item[f] = inp.checked;
+      else if (f === 'received') item[f] = (inp.value === 'si');
+      else if (f === 'month') item[f] = parseInt(inp.value, 10) || 1;
+      else item[f] = (inp.type === 'number') ? (parseFloat(inp.value) || 0) : inp.value;
       reEditor();
     });
   });
@@ -1009,6 +1054,7 @@ function addItem(list) {
     clients: { id: uid(), name: 'Nuevo cliente', gross: 3500000, net: 3000000, recurring: true },
     personalIncome: { id: uid(), name: 'Nuevo ingreso', amount: 0, currency: 'COP' },
     personalExpenses: { id: uid(), name: 'Nuevo gasto', amount: 0, currency: 'COP', period: 'monthly', category: 'variable' },
+    oneOffs: { id: uid(), client: 'Cliente', name: 'Proyecto puntual', amount: 0, month: 2, received: false },
   }[list];
   if (m) S[list].push(m);
 }
@@ -1043,10 +1089,15 @@ function migrate(st) {
   st.meta = Object.assign({}, def.meta, st.meta);
   if (!st.billing2026 || !Array.isArray(st.billing2026.real)) st.billing2026 = { real: def.billing2026.real.slice() };
   // listas: garantizar array, descartar items no-objeto, y backfill de id (para que toda fila sea editable)
-  ['team', 'licenses', 'clients', 'personalIncome', 'personalExpenses'].forEach(k => {
-    if (!Array.isArray(st[k])) { st[k] = def[k]; return; }
+  ['team', 'licenses', 'clients', 'personalIncome', 'personalExpenses', 'oneOffs'].forEach(k => {
+    if (!Array.isArray(st[k])) { st[k] = def[k] ? def[k].slice() : []; return; }
     st[k] = st[k].filter(x => x && typeof x === 'object');
     st[k].forEach(x => { if (x.id == null) x.id = uid(); });
+  });
+  // ingresos únicos: normalizar 'received' a booleano y 'month' a 1..12
+  st.oneOffs.forEach(o => {
+    o.received = o.received === true || o.received === 'si' || o.received === 'true';
+    o.month = clamp(Math.round(Number(o.month) || 1), 1, 12);
   });
   ['newClients', 'newHires'].forEach(k => {
     if (!Array.isArray(st.projection[k])) st.projection[k] = [];
