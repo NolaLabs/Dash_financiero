@@ -472,32 +472,51 @@ const head = (num, title, lead) => `<div class="view-head">
 
 /* ========================================================= VISTAS */
 function renderResumen() {
-  const d = D;
+  const d = D, s = S;
   const selfChip = d.selfFinances
     ? `<span class="chip chip--ok"><span class="cdot"></span>Se autofinancia</span>`
     : `<span class="chip chip--warn"><span class="cdot"></span>No cubre tu salario</span>`;
-  const runwayChip = d.deficit > 0
-    ? `<span class="chip chip--warn"><span class="cdot"></span>${fmtMonths(d.runwayMonths)}</span>`
-    : `<span class="chip chip--ok"><span class="cdot"></span>Sin déficit</span>`;
   const gap = d.salaryToCoverLife - d.ceoSalary;
+  const monthsRes = d.opex ? d.cajaEmpresa / d.opex : 0;
+  const empChip = d.cajaEmpresa >= d.reserva
+    ? `<span class="chip chip--ok"><span class="cdot"></span>Reserva cubierta</span>`
+    : `<span class="chip chip--warn"><span class="cdot"></span>Bajo la reserva</span>`;
+  const persChip = d.resultPersonal >= 0
+    ? `<span class="chip chip--ok"><span class="cdot"></span>Superávit</span>`
+    : `<span class="chip chip--warn"><span class="cdot"></span>Déficit</span>`;
 
   const el = $('#view-resumen');
-  el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: la empresa y tu bolsillo, unidos por tu salario CEO. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.') + `
+  el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: cuánta plata hay en cada cuenta, cómo se mueve mes a mes, y los números que mueven tus decisiones. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.') + `
+  <div class="eyebrow" style="margin-bottom:12px">Tus dos cuentas</div>
+  <div class="grid g-2">
+    <div class="card kpi--dark kpi">
+      <span class="klabel">Cuenta Empresa · saldo hoy</span>
+      <span class="kval">${fmtCOP(d.cajaEmpresa)}</span>
+      <span class="ksub">Flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes · reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses ${empChip}</span>
+    </div>
+    <div class="card kpi">
+      <span class="klabel">Cuenta Personal · saldo hoy</span>
+      <span class="kval">${fmtCOP(d.ahorros)}</span>
+      <span class="ksub">Flujo ${d.resultPersonal >= 0 ? '+' : ''}${fmtShort(d.resultPersonal)}/mes · runway ${d.deficit > 0 ? fmtMonths(d.runwayMonths) : '∞'} ${persChip}</span>
+    </div>
+  </div>
+
+  <div class="eyebrow" style="margin:22px 0 12px">Indicadores clave</div>
   <div class="grid g-4">
+    <div class="card kpi">
+      <span class="klabel">Ingresos netos / mes</span>
+      <span class="kval">${fmtShort(d.ingresosNetos)}</span>
+      <span class="ksub">${d.nClients} clientes recurrentes${d.oneOffsPending ? ` · +${fmtShort(d.oneOffsPending)} único esperado` : ''}</span>
+    </div>
     <div class="card kpi--dark kpi">
       <span class="klabel">Resultado recurrente / mes</span>
       <span class="kval">${fmtCOP(d.resultOperativo)}</span>
       <span class="ksub">Tras tu salario de ${fmtShort(d.ceoSalary)}. ${selfChip}</span>
     </div>
     <div class="card kpi">
-      <span class="klabel">Runway personal</span>
-      <span class="kval">${d.deficit > 0 ? fmtMonths(d.runwayMonths) : '∞'}</span>
-      <span class="ksub">${d.deficit > 0 ? `Déficit ${fmtCOP(d.deficit)}/mes · ahorros ${fmtCOP(d.ahorros)}` : 'Tu ingreso cubre tu vida'} ${runwayChip}</span>
-    </div>
-    <div class="card kpi">
       <span class="klabel">Salario CEO sostenible</span>
       <span class="kval">${fmtShort(d.ceoSalary)}</span>
-      <span class="ksub">Para cubrir tu vida necesitás <b>${fmtShort(d.salaryToCoverLife)}</b> ${gap > 0 ? `· faltan ${fmtShort(gap)}` : '· ya lo cubre'}</span>
+      <span class="ksub">Para cubrir tu vida: <b>${fmtShort(d.salaryToCoverLife)}</b>${gap > 0 ? ` · faltan ${fmtShort(gap)}` : ' · ya lo cubre'}</span>
     </div>
     <div class="card kpi--dark kpi">
       <span class="klabel">Fondo de crecimiento</span>
