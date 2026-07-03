@@ -1,6 +1,6 @@
 /* ==========================================================================
-   NOLA LABS · TABLERO FINANCIERO
-   Sistema visual oficial v2.1 — Crema + Verde Hondo · Big Shoulders + Manrope
+   NOLA LABS Â· TABLERO FINANCIERO
+   Sistema visual oficial v2.1 â€” Crema + Verde Hondo Â· Big Shoulders + Manrope
    "EJECUTAR, NO PRESENTAR."
    ========================================================================== */
 
@@ -9,9 +9,9 @@
   --crema:    #F0EDE5;
   --crema-2:  #FFF3E6;
   --crema-3:  #F7F1EB;
-  --surface:  #FBFAF5;   /* card sobre crema, ligeramente más claro */
+  --surface:  #FBFAF5;   /* card sobre crema, ligeramente mÃ¡s claro */
   --cyprus:   #004643;
-  --verde:    #0A3625;   /* Verde Hondo — color de texto por defecto */
+  --verde:    #0A3625;   /* Verde Hondo â€” color de texto por defecto */
   --sage:     #2D7D6F;
   --rust:     #B85C38;
   --rust-2:   #CB6E4A;
@@ -19,7 +19,7 @@
   --ochre-2:  #DB9C50;
   --ochre-3:  #DFB37E;
 
-  /* derivados translúcidos (líneas, fondos suaves) */
+  /* derivados translÃºcidos (lÃ­neas, fondos suaves) */
   --verde-12: rgba(10,54,37,0.12);
   --verde-20: rgba(10,54,37,0.20);
   --verde-60: rgba(10,54,37,0.60);
@@ -30,12 +30,12 @@
   --sage-12:  rgba(45,125,111,0.12);
   --rust-12:  rgba(184,92,56,0.12);
 
-  /* roles semánticos */
+  /* roles semÃ¡nticos */
   --pos: var(--sage);
   --neg: var(--rust);
   --accent: var(--ochre);
 
-  /* tipografía */
+  /* tipografÃ­a */
   --font-display: 'Big Shoulders Display', 'Arial Narrow', 'Oswald', sans-serif;
   --font-body: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
@@ -74,7 +74,7 @@ a { color: var(--cyprus); }
 .display { font-family: var(--font-display); font-weight: 700; letter-spacing: .2px; line-height: .98; }
 
 /* ---------------------------------------------------------------- eyebrow / labels */
-/* Etiqueta de sección: texto en Cyprus (AA), con un tick Ochre como acento gráfico (Ochre no va como texto sobre Crema) */
+/* Etiqueta de secciÃ³n: texto en Cyprus (AA), con un tick Ochre como acento grÃ¡fico (Ochre no va como texto sobre Crema) */
 .eyebrow {
   font-size: 11px; font-weight: 800; letter-spacing: 2.5px; text-transform: uppercase;
   color: var(--cyprus); display: inline-flex; align-items: center; gap: 7px;
@@ -473,3 +473,24 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .right { text-align: right; }
 .nowrap { white-space: nowrap; }
 .pointer { cursor: pointer; }
+
+/* ============================================================== PAGOS DEL MES */
+.pay-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--verde-12); }
+.pay-row:last-child { border-bottom: none; }
+.pay-check {
+  width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--verde-20);
+  background: #fff; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; flex: 0 0 auto; font-size: 14px; font-weight: 800; color: transparent;
+  transition: all .15s var(--ease); padding: 0;
+}
+.pay-check:hover { border-color: var(--sage); }
+.pay-check.on { background: var(--sage); border-color: var(--sage); color: var(--crema); }
+.pay-main { flex: 1; min-width: 0; }
+.pay-name { font-weight: 700; font-size: 13.5px; color: var(--verde); }
+.pay-detail { font-size: 11.5px; color: var(--verde-60); }
+.pay-row.done .pay-name { color: var(--verde-60); text-decoration: line-through; text-decoration-color: var(--verde-20); }
+.pay-amt { width: 132px; flex: 0 0 auto; text-align: right; }
+.pay-amt input { text-align: right; padding: 8px 10px; font-size: 13px; }
+.pay-amt .fixed { font-weight: 800; color: var(--cyprus); font-size: 13.5px; display: block; }
+.paybar { height: 10px; border-radius: 999px; background: var(--cyprus-08); overflow: hidden; }
+.paybar > div { height: 100%; background: var(--sage); border-radius: 999px; transition: width .4s var(--ease); }
