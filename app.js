@@ -122,6 +122,7 @@ function defaultState() {
     liquidity: { cajaEmpresaHoy: 0, ahorrosPersonalesHoy: 0 },
     billing2026: { real: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
     oneOffs: [],
+    payments: { months: {} },
     projection: { newClients: [], newHires: [], salaryScenario: 3000000 },
   };
 }
@@ -566,6 +567,16 @@ function statusCallouts(d) {
   } else {
     out.push(`<div class="callout callout--ok"><span class="ci">✓</span><div class="ct"><b>Tu vida está cubierta.</b> Tu ingreso personal supera tus gastos. Sin reloj corriendo.</div></div>`);
   }
+  // pagos del mes en curso
+  try {
+    const ym = currentYM();
+    const pit = paymentItemsFor(S, ym);
+    if (pit.length) {
+      const pend = pit.filter(i => !i.paid);
+      if (pend.length) out.push(`<div class="callout callout--cyprus span-all" style="align-items:center"><span class="ci">☑</span><div class="ct" style="flex:1"><b>Pagos de ${esc(ymLabel(ym))}:</b> te faltan ${pend.length} por ${fmtCOP(sum(pend.map(p => p.amount)))}.</div><button class="btn btn--signature btn--sm" data-go="pagos">Ir a pagos →</button></div>`);
+      else out.push(`<div class="callout callout--ok span-all"><span class="ci">✓</span><div class="ct"><b>Pagos del mes al día.</b> Todos los pagos de ${esc(ymLabel(ym))} están hechos.</div></div>`);
+    }
+  } catch (e) { /* si algo falla acá, el Resumen no se cae */ }
   return out.join('');
 }
 
@@ -702,7 +713,7 @@ function renderPersonal() {
 function renderSalud() {
   const d = D;
   const el = $('#view-salud');
-  el.innerHTML = head('04', 'Salud financiera', 'Tu scoring de salud — empresa y bolsillo — calculado sobre 5 dimensiones cada uno. Cada gasto o cliente que edités mueve la aguja en vivo. Así sabés cómo estás con cada decisión.') + `
+  el.innerHTML = head('05', 'Salud financiera', 'Tu scoring de salud — empresa y bolsillo — calculado sobre 5 dimensiones cada uno. Cada gasto o cliente que edités mueve la aguja en vivo. Así sabés cómo estás con cada decisión.') + `
   <div class="grid g-2">
     <div class="card pad-lg"><div class="card-h"><span class="eyebrow">Empresa</span></div>
       ${gaugeBlock('Nola Labs', d.companyHealth.score)}
@@ -769,7 +780,7 @@ function renderProyecciones() {
     <span class="tl">${esc(t.name)} · ${fmtShort(t.pay)}</span>
     <span style="display:flex;align-items:center"><input type="checkbox" data-projinc="${t.id}" ${t.projInclude !== false ? 'checked' : ''}><span class="tr"></span></span></label>`).join('');
 
-  el.innerHTML = head('05', 'Proyecciones', 'Mové las palancas y mirá cómo cambian tu caja y tu runway a 12 meses. Crecer clientes, prender el proyecto Fase 2, subir tu salario, contratar o soltar gente.') + `
+  el.innerHTML = head('06', 'Proyecciones', 'Mové las palancas y mirá cómo cambian tu caja y tu runway a 12 meses. Crecer clientes, prender el proyecto Fase 2, subir tu salario, contratar o soltar gente.') + `
   <div class="grid g-21">
     <div class="card"><div class="card-h"><h3>Palancas</h3><span class="eyebrow">Escenario</span></div>
 
@@ -804,6 +815,188 @@ function renderProyecciones() {
 
   drawProjChart(p);
   bindProjections();
+}
+
+/* ========================================================= PAGOS DEL MES
+   Checklist mensual derivado del MISMO estado que "Datos · Editar":
+   nómina por persona, licencias, tu salario CEO (transferencia empresa→personal)
+   y gastos personales (los no mensuales solo en su mes de cobro).
+   Marcar un pago descuenta del saldo de la cuenta correspondiente; desmarcar lo devuelve. */
+const CAL_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function currentYM() { const n = new Date(); return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); }
+function ymLabel(ym) {
+  const y = +ym.slice(0, 4), m = +ym.slice(5);
+  const t = new Date(y, m - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function paymentItemsFor(s, ym) {
+  const M = parseInt(ym.slice(5), 10);
+  const trm = s.global.trm;
+  const items = [];
+  s.team.forEach(t => items.push({ key: 'team:' + t.id, side: 'empresa', name: 'Nómina · ' + t.name, detail: t.role || '', amount: Number(t.pay) || 0, editable: { list: 'team', id: t.id, field: 'pay' } }));
+  const extraPrest = (s.global.factorPrestacional - 1) * sum(s.team.map(t => t.pay));
+  if (extraPrest > 0.5) items.push({ key: 'prest', side: 'empresa', name: 'Cargas prestacionales del equipo', detail: 'factor ' + s.global.factorPrestacional, amount: extraPrest, editable: null });
+  s.licenses.forEach(l => {
+    const qty = Number(l.qty) || 1;
+    const amt = cop(l.unit, l.currency, trm) * qty;
+    const simple = l.currency === 'COP' && qty === 1;
+    items.push({ key: 'lic:' + l.id, side: 'empresa', name: l.name, detail: (qty > 1 ? qty + ' puestos' : 'suscripción') + (l.currency === 'USD' ? ' · USD a TRM' : ''), amount: amt, editable: simple ? { list: 'licenses', id: l.id, field: 'unit' } : null });
+  });
+  if ((Number(s.global.ceoSalary) || 0) > 0) items.push({ key: 'ceo', side: 'transfer', name: 'Tu salario CEO', detail: 'pasa de la cuenta empresa a tu cuenta personal', amount: s.global.ceoSalary, editable: { global: 'ceoSalary' } });
+  s.personalExpenses.forEach(e => {
+    const q = clamp(Math.round(Number(e.dueMonth) || 1), 1, 12);
+    const due = e.period === 'monthly'
+      || (e.period === 'quarterly' && ((M - q) % 3 + 3) % 3 === 0)
+      || (e.period === 'annual' && M === q);
+    if (!due) return;
+    const per = e.period === 'quarterly' ? ' · trimestral' : e.period === 'annual' ? ' · anual' : '';
+    items.push({ key: 'exp:' + e.id, side: 'personal', name: e.name, detail: (CATS[e.category] || CATS.otro).label + per + (e.currency === 'USD' ? ' · USD a TRM' : ''), amount: cop(e.amount, e.currency, trm), editable: e.currency === 'COP' ? { list: 'personalExpenses', id: e.id, field: 'amount' } : null });
+  });
+  const mm = s.payments && s.payments.months && s.payments.months[ym];
+  const paid = (mm && mm.paid) || {};
+  items.forEach(it => { const p = paid[it.key]; it.paid = !!p; it.paidAmount = p ? (Number(p.amount) || 0) : null; });
+  return items;
+}
+function applyPayEffect(side, amt, sign) { // sign +1 = marcar pagado, -1 = desmarcar
+  amt = Number(amt) || 0;
+  const L = S.liquidity;
+  L.cajaEmpresaHoy = Number(L.cajaEmpresaHoy) || 0;
+  L.ahorrosPersonalesHoy = Number(L.ahorrosPersonalesHoy) || 0;
+  if (side === 'personal') L.ahorrosPersonalesHoy -= sign * amt;
+  else if (side === 'transfer') { L.cajaEmpresaHoy -= sign * amt; L.ahorrosPersonalesHoy += sign * amt; }
+  else L.cajaEmpresaHoy -= sign * amt;
+}
+const sideForKey = key => key.indexOf('exp:') === 0 ? 'personal' : key === 'ceo' ? 'transfer' : 'empresa';
+// Pagos registrados cuyo ítem ya no existe o dejó de aplicar este mes: se muestran como
+// filas fantasma reversibles, para que el descuento nunca quede atrapado sin UI.
+function withOrphans(s, ym, items) {
+  const mm = s.payments && s.payments.months && s.payments.months[ym];
+  const paid = (mm && mm.paid) || {};
+  const known = new Set(items.map(i => i.key));
+  Object.keys(paid).forEach(k => {
+    if (known.has(k)) return;
+    const amt = Number(paid[k].amount) || 0;
+    items.push({
+      key: k, side: sideForKey(k), orphan: true,
+      name: 'Pago registrado · ítem eliminado o fuera de este mes',
+      detail: paid[k].applied === false ? 'registro histórico (no tocó saldos)' : 'desmarcá para devolver el monto al saldo',
+      amount: amt, editable: null, paid: true, paidAmount: amt,
+    });
+  });
+  return items;
+}
+function togglePayment(ym, key) {
+  if (!S.payments || typeof S.payments !== 'object') S.payments = { months: {} };
+  if (!S.payments.months) S.payments.months = {};
+  const isCurrent = ym === currentYM();
+  const months = S.payments.months;
+  const paid = (months[ym] && months[ym].paid) || {};
+  if (paid[key]) {
+    // desmarcar: devolver exactamente lo descontado, SOLO si al marcar se descontó
+    if (paid[key].applied !== false) {
+      const it = paymentItemsFor(S, ym).find(x => x.key === key);
+      applyPayEffect(it ? it.side : sideForKey(key), Number(paid[key].amount) || 0, -1);
+    }
+    delete paid[key];
+    if (!Object.keys(paid).length) delete months[ym]; // no dejar meses vacíos fantasma
+  } else {
+    const it = paymentItemsFor(S, ym).find(x => x.key === key);
+    if (!it) return;
+    if (!months[ym]) months[ym] = { paid: {} };
+    // solo el MES ACTUAL mueve saldos; meses pasados/futuros son registro histórico
+    months[ym].paid[key] = { amount: it.amount, at: Date.now(), applied: isCurrent };
+    if (isCurrent) applyPayEffect(it.side, it.amount, +1);
+    else toast('Registro histórico: no toca los saldos de hoy', '');
+  }
+  D = compute(S); S.meta.updatedAt = Date.now(); saveLocal(); queueCloudSave(); updateHeader();
+  renderPagos();
+}
+let payMonth = null;
+function paySummaryData(items) {
+  const totalDue = sum(items.map(i => i.paid ? i.paidAmount : i.amount));
+  const paidAmt = sum(items.filter(i => i.paid).map(i => i.paidAmount));
+  return { totalDue, paidAmt, nPaid: items.filter(i => i.paid).length, n: items.length, pct: totalDue ? Math.round(paidAmt / totalDue * 100) : 0 };
+}
+function payRow(it) {
+  const amtCell = it.paid
+    ? `<span class="fixed tabnum">${fmtCOP(it.paidAmount)}</span>`
+    : (it.editable
+      ? `<input class="input" type="number" value="${it.amount}" data-payedit="${esc(it.key)}" title="Editar acá también lo cambia en Datos · Editar">`
+      : `<span class="fixed tabnum" title="Monto en USD o con cantidad: se edita en Datos · Editar">${fmtCOP(it.amount)}</span>`);
+  return `<div class="pay-row ${it.paid ? 'done' : ''}">
+    <button class="pay-check ${it.paid ? 'on' : ''}" data-paykey="${esc(it.key)}" aria-label="Marcar pagado">✓</button>
+    <div class="pay-main"><div class="pay-name">${esc(it.name)}</div><div class="pay-detail">${esc(it.detail || '')}${it.paid ? ' · pagado ✓' : ''}</div></div>
+    <div class="pay-amt">${amtCell}</div></div>`;
+}
+function renderPagos() {
+  const s = S, el = $('#view-pagos');
+  const cur = currentYM();
+  if (!payMonth) payMonth = cur;
+  const known = [...new Set([cur, ...Object.keys((s.payments && s.payments.months) || {})])].sort().reverse();
+  if (!known.includes(payMonth)) payMonth = cur;
+  const items = withOrphans(s, payMonth, paymentItemsFor(s, payMonth));
+  const emp = items.filter(i => i.side !== 'personal');
+  const per = items.filter(i => i.side === 'personal');
+  const t = paySummaryData(items);
+  const isHist = payMonth !== cur;
+  const opts = known.map(k => `<option value="${esc(k)}" ${k === payMonth ? 'selected' : ''}>${ymLabel(k)}${k === cur ? ' · actual' : ''}</option>`).join('');
+  el.innerHTML = head('04', 'Pagos del mes', 'Los pagos que debés hacer este mes, derivados de tus datos reales (nómina, licencias, tu salario y tus gastos). Marcá cada uno cuando lo hagas: se descuenta del saldo de la cuenta que corresponde. Editar un monto acá también lo cambia en <b>Datos · Editar</b>.') + `
+  <div class="card pad-lg">
+    <div class="card-h"><h3>${esc(ymLabel(payMonth))}</h3><select id="payMonthSel" style="width:auto">${opts}</select></div>
+    <div class="flex between center wrap gap-8" style="margin-bottom:10px">
+      <span id="paySumTxt" style="font-weight:700;font-size:13.5px">Pagados ${t.nPaid} de ${t.n} · ${fmtCOP(t.paidAmt)} de ${fmtCOP(t.totalDue)}</span>
+      <span class="chip ${t.n && t.nPaid === t.n ? 'chip--ok' : 'chip--info'}" id="paySumChip"><span class="cdot"></span>${t.n && t.nPaid === t.n ? 'Mes al día' : 'Falta ' + fmtCOP(t.totalDue - t.paidAmt)}</span>
+    </div>
+    <div class="paybar"><div id="payBarFill" style="width:${t.pct}%"></div></div>
+    ${isHist ? `<div class="warnbox mt-8">Estás viendo un mes distinto al actual. Marcar o desmarcar acá <b>solo registra el historial</b> — no toca los saldos de hoy.</div>` : ''}
+    <p class="card-note">Al marcar, el monto sale del saldo de la cuenta correspondiente; tu salario CEO pasa de la empresa a tu bolsillo. Al desmarcar, se devuelve. Un mes nuevo arranca con todo sin marcar.</p>
+  </div>
+  <div class="grid g-2 mt-16">
+    <div class="card"><div class="card-h"><h3>Cuenta Empresa</h3><span class="eyebrow" id="payEmpTot">${emp.length} pagos · ${fmtShort(sum(emp.map(i => i.paid ? i.paidAmount : i.amount)))}</span></div>
+      ${emp.map(payRow).join('') || '<p class="hint">Sin pagos de empresa este mes.</p>'}
+    </div>
+    <div class="card"><div class="card-h"><h3>Cuenta Personal</h3><span class="eyebrow" id="payPerTot">${per.length} pagos · ${fmtShort(sum(per.map(i => i.paid ? i.paidAmount : i.amount)))}</span></div>
+      ${per.map(payRow).join('') || '<p class="hint">Sin pagos personales este mes.</p>'}
+    </div>
+  </div>
+  <div class="card mt-16 warm"><div class="card-h"><h3>Saldos tras lo pagado</h3></div>
+    <div class="grid g-2">
+      <div class="insight"><div class="il">Cuenta Empresa hoy</div><div class="iv">${fmtShort(s.liquidity.cajaEmpresaHoy)}</div><div class="id">Se actualiza al marcar pagos</div></div>
+      <div class="insight"><div class="il">Cuenta Personal hoy</div><div class="iv">${fmtShort(s.liquidity.ahorrosPersonalesHoy)}</div><div class="id">Se actualiza al marcar pagos</div></div>
+    </div>
+  </div>`;
+  bindPagos(el);
+}
+function updatePaySummary() {
+  const items = withOrphans(S, payMonth, paymentItemsFor(S, payMonth));
+  const t = paySummaryData(items);
+  const st = $('#paySumTxt'); if (st) st.textContent = `Pagados ${t.nPaid} de ${t.n} · ${fmtCOP(t.paidAmt)} de ${fmtCOP(t.totalDue)}`;
+  const ch = $('#paySumChip'); if (ch) ch.innerHTML = `<span class="cdot"></span>${t.n && t.nPaid === t.n ? 'Mes al día' : 'Falta ' + fmtCOP(t.totalDue - t.paidAmt)}`;
+  const bf = $('#payBarFill'); if (bf) bf.style.width = t.pct + '%';
+  const totTxt = arr => `${arr.length} pagos · ${fmtShort(sum(arr.map(i => i.paid ? i.paidAmount : i.amount)))}`;
+  const te = $('#payEmpTot'); if (te) te.textContent = totTxt(items.filter(i => i.side !== 'personal'));
+  const tp = $('#payPerTot'); if (tp) tp.textContent = totTxt(items.filter(i => i.side === 'personal'));
+}
+function bindPagos(el) {
+  const sel = $('#payMonthSel'); if (sel) sel.addEventListener('change', () => { payMonth = sel.value; renderPagos(); });
+  el.querySelectorAll('[data-paykey]').forEach(b => b.addEventListener('click', () => togglePayment(payMonth, b.dataset.paykey)));
+  // descriptor capturado AL BIND (no re-buscar por key en cada tecla: si el ítem desaparece
+  // transitoriamente —p.ej. salario CEO en 0 mientras se retipea— el input sigue funcionando)
+  const editMap = {};
+  withOrphans(S, payMonth, paymentItemsFor(S, payMonth)).forEach(i => { if (i.editable && !i.paid) editMap[i.key] = i.editable; });
+  el.querySelectorAll('[data-payedit]').forEach(inp => {
+    // editar el monto acá escribe en el MISMO dato que "Datos · Editar" (misma fuente)
+    inp.addEventListener('input', () => {
+      const ed = editMap[inp.dataset.payedit];
+      if (!ed) return;
+      const v = parseFloat(inp.value) || 0;
+      if (ed.global) S.global[ed.global] = v;
+      else { const li = S[ed.list].find(x => x.id === ed.id); if (li) li[ed.field] = v; }
+      reEditor(); updatePaySummary();
+    });
+    inp.addEventListener('change', () => renderPagos());
+  });
 }
 
 /* ========================================================= EDITOR */
@@ -860,6 +1053,7 @@ function renderEditor() {
   <div class="editor-sec card"><div class="card-h"><h3>Gastos personales · ${s.personalExpenses.length}</h3></div>
     <div id="ed-exp"></div>
     <button class="btn btn--ghost btn--sm row-add" data-add="personalExpenses">+ Agregar gasto</button>
+    <div class="hint">"Mes cobro" solo aplica a gastos trimestrales o anuales: define en qué mes calendario se pagan de verdad (los trimestrales se repiten cada 3 meses desde ese mes). Alimenta la vista <b>Pagos del mes</b>.</div>
   </div>
 
   <div class="editor-sec card"><div class="card-h"><h3>Proyecto único · capital</h3></div>
@@ -914,12 +1108,13 @@ function renderEditor() {
     <div class="field-inline"><label>Moneda</label><select data-list="personalIncome" data-id="${i.id}" data-field="currency"><option ${i.currency === 'COP' ? 'selected' : ''}>COP</option><option ${i.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
     <button class="iconbtn" data-del="personalIncome" data-id="${i.id}">✕</button></div>`).join('');
 
-  $('#ed-exp').innerHTML = s.personalExpenses.map(e => `<div class="repeat-row" style="grid-template-columns:1.4fr .9fr .7fr 1fr 1fr auto" data-row="personalExpenses" data-id="${e.id}">
+  $('#ed-exp').innerHTML = s.personalExpenses.map(e => `<div class="repeat-row" style="grid-template-columns:1.3fr .85fr .65fr .95fr .95fr .75fr auto" data-row="personalExpenses" data-id="${e.id}">
     ${repeatField('Concepto', e.name, '', { type: 'text' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="name"`)}
     ${repeatField('Monto', e.amount, '', { step: '0.01' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="amount"`)}
     <div class="field-inline"><label>Moneda</label><select data-list="personalExpenses" data-id="${e.id}" data-field="currency"><option ${e.currency === 'COP' ? 'selected' : ''}>COP</option><option ${e.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
     <div class="field-inline"><label>Periodo</label><select data-list="personalExpenses" data-id="${e.id}" data-field="period"><option value="monthly" ${e.period === 'monthly' ? 'selected' : ''}>Mensual</option><option value="quarterly" ${e.period === 'quarterly' ? 'selected' : ''}>Trimestral</option><option value="annual" ${e.period === 'annual' ? 'selected' : ''}>Anual</option></select></div>
     <div class="field-inline"><label>Categoría</label><select data-list="personalExpenses" data-id="${e.id}" data-field="category">${Object.keys(CATS).map(k => `<option value="${k}" ${e.category === k ? 'selected' : ''}>${CATS[k].label}</option>`).join('')}</select></div>
+    <div class="field-inline"><label>Mes cobro</label><select data-list="personalExpenses" data-id="${e.id}" data-field="dueMonth">${CAL_MESES.map((m, i) => `<option value="${i + 1}" ${(clamp(Math.round(Number(e.dueMonth) || 1), 1, 12)) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
     <button class="iconbtn" data-del="personalExpenses" data-id="${e.id}">✕</button></div>`).join('');
 
   $('#ed-oneoffs').innerHTML = (s.oneOffs || []).map(o => `<div class="repeat-row" style="grid-template-columns:1.3fr 1.4fr 1fr 1.1fr 1fr auto" data-row="oneOffs" data-id="${o.id}">
@@ -980,7 +1175,7 @@ function renderAjustes() {
 
 /* ========================================================= NAV + RENDER LOOP */
 let S = null, D = null, current = 'resumen';
-const VIEWS = { resumen: renderResumen, empresa: renderEmpresa, personal: renderPersonal, salud: renderSalud, proyecciones: renderProyecciones, editor: renderEditor, ajustes: renderAjustes };
+const VIEWS = { resumen: renderResumen, empresa: renderEmpresa, personal: renderPersonal, pagos: renderPagos, salud: renderSalud, proyecciones: renderProyecciones, editor: renderEditor, ajustes: renderAjustes };
 
 let chartTimer = null;
 function re(opts = {}) {
@@ -995,6 +1190,8 @@ function re(opts = {}) {
 }
 function go(view) {
   current = view;
+  if (view === 'pagos') payMonth = currentYM(); // siempre aterrizar en el mes actual al navegar
+
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach(v => v.classList.remove('active'));
   $('#view-' + view).classList.add('active');
@@ -1042,8 +1239,10 @@ function bindEditor() {
       const f = inp.dataset.field;
       if (inp.type === 'checkbox') item[f] = inp.checked;
       else if (f === 'received') item[f] = (inp.value === 'si');
-      else if (f === 'month') item[f] = parseInt(inp.value, 10) || 1;
+      else if (f === 'month' || f === 'dueMonth') item[f] = parseInt(inp.value, 10) || 1;
       else item[f] = (inp.type === 'number') ? (parseFloat(inp.value) || 0) : inp.value;
+      // al volver un gasto trimestral/anual, anclar su mes de cobro ya mismo (canónico antes de subir)
+      if (f === 'period' && item[f] !== 'monthly' && item.dueMonth == null) item.dueMonth = clamp(new Date().getMonth() + 1, 1, 12);
       reEditor();
     });
   });
@@ -1061,7 +1260,12 @@ function bindEditor() {
   $('#edExport').addEventListener('click', exportJSON);
   $('#edImport').addEventListener('click', () => $('#edFile').click());
   $('#edFile').addEventListener('change', importJSON);
-  $('#edReset').addEventListener('click', () => { if (confirm('¿Restablecer todos los datos a las cifras originales del Excel?')) { S = defaultState(); renderEditor(); re(); toast('Datos restablecidos', 'ok'); } });
+  $('#edReset').addEventListener('click', () => {
+    if (confirm('⚠ Esto reemplaza TODO por una plantilla genérica vacía: equipo, clientes, gastos, saldos y TODO el historial de Pagos del mes. También sobrescribe la nube en todos tus dispositivos. No se puede deshacer.\n\nPrimero se descargará un respaldo .json automático. ¿Continuar?')) {
+      exportJSON();
+      S = defaultState(); renderEditor(); re(); toast('Datos restablecidos a plantilla', 'ok');
+    }
+  });
 }
 // recompute without rebuilding the editor DOM (so inputs keep focus)
 function reEditor() { D = compute(S); S.meta.updatedAt = Date.now(); saveLocal(); queueCloudSave(); updateHeader(); }
@@ -1118,6 +1322,30 @@ function migrate(st) {
     o.received = o.received === true || o.received === 'si' || o.received === 'true';
     o.month = clamp(Math.round(Number(o.month) || 1), 1, 12);
   });
+  // saldos: coercer a número (un respaldo editado a mano con strings concatenaría en el transfer)
+  st.liquidity.cajaEmpresaHoy = Number(st.liquidity.cajaEmpresaHoy) || 0;
+  st.liquidity.ahorrosPersonalesHoy = Number(st.liquidity.ahorrosPersonalesHoy) || 0;
+  // pagos del mes: estructura { months: { "YYYY-MM": { paid: { <key>: {amount, at, applied} } } } }
+  if (!st.payments || typeof st.payments !== 'object' || Array.isArray(st.payments)) st.payments = { months: {} };
+  if (!st.payments.months || typeof st.payments.months !== 'object' || Array.isArray(st.payments.months)) st.payments.months = {};
+  const nowYM = currentYM();
+  Object.keys(st.payments.months).forEach(k => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(k)) { delete st.payments.months[k]; return; } // llaves basura fuera
+    const m = st.payments.months[k];
+    if (!m || typeof m !== 'object' || !m.paid || typeof m.paid !== 'object' || Array.isArray(m.paid)) { st.payments.months[k] = { paid: {} }; return; }
+    Object.keys(m.paid).forEach(pk => {
+      const p = m.paid[pk];
+      if (!p || typeof p !== 'object') { delete m.paid[pk]; return; }
+      p.amount = Number(p.amount) || 0;
+      if (p.applied === undefined) p.applied = true; // entradas previas a este campo sí descontaron
+    });
+    if (k !== nowYM && !Object.keys(m.paid).length) delete st.payments.months[k]; // meses vacíos fuera
+  });
+  // conservar máximo 24 meses de historial
+  const mks = Object.keys(st.payments.months).sort();
+  mks.slice(0, Math.max(0, mks.length - 24)).forEach(k => delete st.payments.months[k]);
+  // gastos no mensuales: mes de cobro calendario (1..12) para saber en qué mes se pagan de verdad
+  st.personalExpenses.forEach(e => { if (e.period !== 'monthly') e.dueMonth = clamp(Math.round(Number(e.dueMonth) || 1), 1, 12); });
   ['newClients', 'newHires'].forEach(k => {
     if (!Array.isArray(st.projection[k])) st.projection[k] = [];
     else { st.projection[k] = st.projection[k].filter(x => x && typeof x === 'object'); st.projection[k].forEach(x => { if (x.id == null) x.id = uid(); }); }
@@ -1135,12 +1363,24 @@ function exportJSON() {
 function importJSON(ev) {
   const f = ev.target.files[0]; if (!f) return;
   const rd = new FileReader();
-  rd.onload = () => { try { S = migrate(JSON.parse(rd.result)); re(); go(current); toast('Datos importados', 'ok'); } catch (e) { toast('Archivo inválido', 'err'); } };
+  rd.onload = () => {
+    try {
+      const parsed = JSON.parse(rd.result);
+      const when = parsed && parsed.meta && parsed.meta.updatedAt ? new Date(parsed.meta.updatedAt).toLocaleString('es-CO') : 'fecha desconocida';
+      if (!confirm(`Esto reemplaza TODOS los datos actuales (y sobrescribe la nube) con el respaldo del ${when}. ¿Continuar?`)) return;
+      const curPay = S && S.payments;
+      S = migrate(parsed);
+      // un respaldo viejo sin historial de pagos no debe borrar el historial actual
+      if (curPay && Object.keys(curPay.months || {}).length && !Object.keys(S.payments.months).length) S.payments = curPay;
+      re(); go(current); toast('Datos importados', 'ok');
+    } catch (e) { toast('Archivo inválido', 'err'); }
+  };
   rd.readAsText(f); ev.target.value = '';
 }
 
 /* ========================================================= NUBE (Supabase) */
-const cloud = { client: null, user: null, saveTimer: null, applying: false, ready: false };
+const cloud = { client: null, user: null, saveTimer: null, applying: false, ready: false, lastStamp: null, token: null, pendingRemote: null, channel: null, subWasUp: false, resubTimer: null };
+const LS_BOUND = 'nola_tablero_cloud_bound'; // a qué usuario de nube pertenece el estado local
 // Conexión a la nube de Nola Labs ya configurada (la anon key es pública por diseño; la seguridad la da el RLS).
 const DEFAULT_CLOUD = {
   url: 'https://baqevhsyawugvekqbwsm.supabase.co',
@@ -1155,8 +1395,9 @@ async function initSupabase() {
   try {
     const { createClient } = await import(SUPABASE_CDN);
     cloud.client = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+    cloud.client.auth.onAuthStateChange((_ev, session) => { cloud.token = session ? session.access_token : null; });
     const { data } = await cloud.client.auth.getSession();
-    if (data && data.session) cloud.user = data.session.user;
+    if (data && data.session) { cloud.user = data.session.user; cloud.token = data.session.access_token; }
     return true;
   } catch (e) { console.warn('Supabase no disponible:', e); cloud.client = null; return false; }
 }
@@ -1173,23 +1414,101 @@ async function cloudSignIn(email, password, create) {
   cloud.user = data.user;
 }
 // Distingue "no hay fila" (data:null) de "falló la lectura" (ok:false) para no sobrescribir la nube por un blip.
+// Devuelve también el updated_at de la fila (stamp) para escrituras condicionales.
 async function loadCloudState() {
-  const { data, error } = await cloud.client.from('tableros').select('data').eq('owner', cloud.user.id).maybeSingle();
+  const { data, error } = await cloud.client.from('tableros').select('data, updated_at').eq('owner', cloud.user.id).maybeSingle();
   if (error) { console.warn('loadCloudState', error); return { ok: false }; }
-  return { ok: true, data: data ? data.data : null };
+  return { ok: true, data: data ? data.data : null, stamp: data ? data.updated_at : null };
 }
+const metaAt = st => (st && st.meta && Number(st.meta.updatedAt)) || 0;
+// ¿El usuario está tipeando en un campo de texto/número? (los selects y checkboxes no cuentan)
+function isTypingNow() {
+  const ae = document.activeElement;
+  return !!(ae && ae.closest && ae.closest('.main') && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && /^(text|number|email|password|search)$/.test(ae.type))));
+}
+// Aplica un estado entrante de la nube: cancela el debounce local (para no re-subir lo pisado),
+// y solo re-renderiza si el usuario no está tipeando.
+function applyRemoteState(data, stamp) {
+  let next;
+  try { next = migrate(data); } catch (e) { console.warn('applyRemote migrate', e); return; }
+  cloud.applying = true;
+  try {
+    clearTimeout(cloud.saveTimer); cloud.saveTimer = null;
+    S = next; D = compute(S); saveLocal(); updateHeader();
+    if (stamp) cloud.lastStamp = stamp;
+    if (!isTypingNow()) (VIEWS[current] || renderResumen)();
+  } catch (e) { console.warn('applyRemote', e); }
+  finally { cloud.applying = false; }
+}
+async function forceSaveCloud() {
+  const payload = { owner: cloud.user.id, data: S, updated_at: new Date().toISOString() };
+  const { data, error } = await cloud.client.from('tableros').upsert(payload, { onConflict: 'owner' }).select('updated_at');
+  if (error) { console.warn('saveCloud', error); return; }
+  if (data && data.length) cloud.lastStamp = data[0].updated_at;
+}
+// Escritura condicional: solo pisa la versión de fila que este dispositivo conoce (lastStamp).
+// Si otro dispositivo escribió en el medio, se lee la nube y gana el estado con meta.updatedAt más nuevo.
 async function saveCloud() {
   if (!cloud.client || !cloud.user || !cloud.ready) return;
-  const payload = { owner: cloud.user.id, data: S, updated_at: new Date().toISOString() };
-  const { error } = await cloud.client.from('tableros').upsert(payload, { onConflict: 'owner' });
-  if (error) console.warn('saveCloud', error);
+  try {
+    if (!cloud.lastStamp) { await forceSaveCloud(); return; }
+    const payload = { data: S, updated_at: new Date().toISOString() };
+    const { data, error } = await cloud.client.from('tableros')
+      .update(payload).eq('owner', cloud.user.id).eq('updated_at', cloud.lastStamp).select('updated_at');
+    if (error) { console.warn('saveCloud', error); return; }
+    if (data && data.length) { cloud.lastStamp = data[0].updated_at; return; }
+    // conflicto: la nube cambió desde nuestra última base — resolver por meta.updatedAt
+    const res = await loadCloudState();
+    if (!res.ok) return;
+    cloud.lastStamp = res.stamp;
+    if (res.data && metaAt(res.data) > metaAt(S)) {
+      applyRemoteState(res.data, res.stamp);
+      toast('Se cargó una versión más nueva desde la nube', '');
+    } else {
+      await forceSaveCloud(); // lo nuestro es más nuevo: pisar
+    }
+  } catch (e) { console.warn('saveCloud', e); }
 }
 function queueCloudSave() {
   if (!cloud.client || !cloud.user || !cloud.ready || cloud.applying) return;
   clearTimeout(cloud.saveTimer);
   cloud.saveTimer = setTimeout(saveCloud, 900);
 }
+// Último aliento al cerrar/ocultar la pestaña: si hay un guardado pendiente, mandarlo con keepalive.
+function flushCloudSave() {
+  if (!cloud.saveTimer || !cloud.client || !cloud.user || !cloud.ready) return;
+  clearTimeout(cloud.saveTimer); cloud.saveTimer = null;
+  const cfg = loadCloudCfg();
+  try {
+    if (cfg.url && cloud.token) {
+      fetch(cfg.url + '/rest/v1/tableros?owner=eq.' + cloud.user.id, {
+        method: 'PATCH', keepalive: true,
+        headers: { apikey: cfg.anonKey, Authorization: 'Bearer ' + cloud.token, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ data: S, updated_at: new Date().toISOString() }),
+      });
+    } else { saveCloud(); }
+  } catch (e) { /* mejor esfuerzo */ }
+}
+// Releer la nube al volver el foco / la conexión: repone eventos realtime perdidos
+// (pestaña dormida) ANTES de que el usuario edite sobre un estado viejo.
+async function refetchCloud() {
+  if (!cloud.client || !cloud.user || !cloud.ready) return;
+  try {
+    const res = await loadCloudState();
+    if (!res.ok || !res.data) return;
+    if (res.stamp && res.stamp === cloud.lastStamp) return; // sin novedades
+    if (metaAt(res.data) > metaAt(S)) {
+      applyRemoteState(res.data, res.stamp);
+      toast('Actualizado desde la nube', 'ok');
+    } else {
+      cloud.lastStamp = res.stamp;
+      if (metaAt(res.data) < metaAt(S)) queueCloudSave(); // lo local es más nuevo: subirlo
+    }
+  } catch (e) { console.warn('refetchCloud', e); }
+}
 // Carga el estado de la nube (o siembra si está vacía). Solo escribe si la lectura tuvo éxito.
+// Si el estado LOCAL de este mismo usuario es más nuevo (p.ej. un pago marcado justo antes de
+// cerrar la pestaña, que no alcanzó a subir), se conserva y se sube en lugar de pisarlo.
 async function enterCloud() {
   const res = await loadCloudState();
   if (!res.ok) {
@@ -1198,31 +1517,45 @@ async function enterCloud() {
     unlock(); return;
   }
   cloud.ready = true;     // lectura ok: ya es seguro escribir
-  if (res.data) S = migrate(res.data);
-  else await saveCloud(); // primera vez: sembrar la nube con el estado actual
+  cloud.lastStamp = res.stamp || null;
+  let boundToMe = false;
+  try { boundToMe = localStorage.getItem(LS_BOUND) === cloud.user.id; } catch (e) {}
+  if (res.data) {
+    if (boundToMe && metaAt(S) > metaAt(res.data)) await forceSaveCloud(); // local más nuevo del MISMO usuario
+    else S = migrate(res.data);
+  } else {
+    await forceSaveCloud(); // primera vez: sembrar la nube con el estado actual
+  }
+  try { localStorage.setItem(LS_BOUND, cloud.user.id); } catch (e) {}
   subscribeRealtime();
   unlock();
 }
 function subscribeRealtime() {
   if (!cloud.client || !cloud.user) return;
-  cloud.client.channel('tablero-' + cloud.user.id)
+  if (cloud.channel) { try { cloud.client.removeChannel(cloud.channel); } catch (e) {} cloud.channel = null; }
+  cloud.channel = cloud.client.channel('tablero-' + cloud.user.id)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tableros', filter: 'owner=eq.' + cloud.user.id }, payload => {
       const incoming = payload.new && payload.new.data;
       if (!incoming) return;
-      let next;
-      try { next = migrate(incoming); } catch (e) { console.warn('realtime migrate', e); return; }
-      if (stableStr(next) === stableStr(S)) return;  // eco propio o sin cambios reales (jsonb reordena llaves)
-      // no destruir un input que el usuario está editando (perdería foco y lo escrito)
-      const ae = document.activeElement;
-      const editing = ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName) && ae.closest('.main');
-      cloud.applying = true;
-      try {
-        S = next; D = compute(S); saveLocal(); updateHeader();
-        if (!editing) (VIEWS[current] || renderResumen)();
-      } catch (e) { console.warn('realtime apply', e); }
-      finally { cloud.applying = false; }
-      if (!editing) toast('Actualizado desde otro dispositivo', 'ok');
-    }).subscribe();
+      const stamp = payload.new.updated_at || null;
+      // eco propio o estado más viejo: ignorar (no revierte lo tipeado después de un save)
+      if (metaAt(incoming) <= metaAt(S)) return;
+      if (isTypingNow()) {
+        cloud.pendingRemote = { data: incoming, stamp }; // aplicar al terminar de editar
+        return;
+      }
+      applyRemoteState(incoming, stamp);
+      toast('Actualizado desde otro dispositivo', 'ok');
+    })
+    .subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        if (cloud.subWasUp) refetchCloud(); // reconexión: reponer lo que llegó mientras tanto
+        cloud.subWasUp = true;
+      } else if (cloud.subWasUp && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) {
+        clearTimeout(cloud.resubTimer);
+        cloud.resubTimer = setTimeout(() => { try { subscribeRealtime(); } catch (e) {} }, 4000);
+      }
+    });
 }
 
 /* ========================================================= LOCK / ARRANQUE */
@@ -1297,7 +1630,25 @@ function initShell() {
     if (cloud.client && cloud.user) { await cloud.client.auth.signOut(); location.reload(); }
     else { location.reload(); }
   });
-  window.addEventListener('beforeunload', saveLocal);
+  window.addEventListener('beforeunload', () => { saveLocal(); flushCloudSave(); });
+  window.addEventListener('pagehide', () => { saveLocal(); flushCloudSave(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refetchCloud();
+    else flushCloudSave();
+  });
+  window.addEventListener('online', () => refetchCloud());
+  // cambios remotos que llegaron mientras se tipeaba: aplicarlos al soltar el foco
+  document.addEventListener('focusout', () => {
+    if (!cloud.pendingRemote) return;
+    setTimeout(() => {
+      if (!cloud.pendingRemote || isTypingNow()) return;
+      const pr = cloud.pendingRemote; cloud.pendingRemote = null;
+      if (metaAt(pr.data) > metaAt(S)) {
+        applyRemoteState(pr.data, pr.stamp);
+        toast('Actualizado desde otro dispositivo', 'ok');
+      }
+    }, 120);
+  });
 }
 
 async function main() {

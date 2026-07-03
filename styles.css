@@ -473,3 +473,24 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .right { text-align: right; }
 .nowrap { white-space: nowrap; }
 .pointer { cursor: pointer; }
+
+/* ============================================================== PAGOS DEL MES */
+.pay-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--verde-12); }
+.pay-row:last-child { border-bottom: none; }
+.pay-check {
+  width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--verde-20);
+  background: #fff; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; flex: 0 0 auto; font-size: 14px; font-weight: 800; color: transparent;
+  transition: all .15s var(--ease); padding: 0;
+}
+.pay-check:hover { border-color: var(--sage); }
+.pay-check.on { background: var(--sage); border-color: var(--sage); color: var(--crema); }
+.pay-main { flex: 1; min-width: 0; }
+.pay-name { font-weight: 700; font-size: 13.5px; color: var(--verde); }
+.pay-detail { font-size: 11.5px; color: var(--verde-60); }
+.pay-row.done .pay-name { color: var(--verde-60); text-decoration: line-through; text-decoration-color: var(--verde-20); }
+.pay-amt { width: 132px; flex: 0 0 auto; text-align: right; }
+.pay-amt input { text-align: right; padding: 8px 10px; font-size: 13px; }
+.pay-amt .fixed { font-weight: 800; color: var(--cyprus); font-size: 13.5px; display: block; }
+.paybar { height: 10px; border-radius: 999px; background: var(--cyprus-08); overflow: hidden; }
+.paybar > div { height: 100%; background: var(--sage); border-radius: 999px; transition: width .4s var(--ease); }

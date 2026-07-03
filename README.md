@@ -11,6 +11,7 @@ Clave de acceso: **`[redactado]`**
 - **Resumen** — KPIs principales: resultado recurrente, runway personal, salario CEO sostenible vs. salario para cubrir tu vida, fondo de crecimiento del proyecto único. Gráfica firma "empresa vs. bolsillo" a 12 meses.
 - **Empresa** — P&L recurrente, estructura de costos, **punto de equilibrio** (con y sin tu salario, en pesos y en número de clientes), facturación 2026 real vs. meta.
 - **Personal** — presupuesto, cada gasto con su **% del ingreso** y semáforo de impacto, runway, y cuánto debe subir tu salario para cubrir tu vida.
+- **Pagos del mes** — checklist mensual de todo lo que debés pagar (nómina por persona, licencias, tu salario, gastos personales; los trimestrales/anuales solo en su mes de cobro). Marcar descuenta del saldo de la cuenta correspondiente (tu salario pasa de empresa a personal); desmarcar devuelve. Editar un monto acá también lo cambia en Datos · Editar. Cada mes nuevo arranca sin marcar; el historial queda por mes.
 - **Salud financiera** — scoring 0–100 para empresa y para tu bolsillo, desglosado en 5 dimensiones cada uno. Tabla de impacto por gasto.
 - **Proyecciones** — palancas interactivas: crecer clientes, prender el **proyecto Fase 2**, subir tu salario, contratar/soltar gente. Todo recalcula la caja y el runway en vivo.
 - **Datos · Editar** — todo editable: nº de empleados y nómina de cada uno, nº de clientes y facturación por cliente, licencias, gastos personales, saldos reales de tus dos cuentas, proyecto único.
