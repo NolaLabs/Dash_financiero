@@ -7,7 +7,7 @@
 <meta name="description" content="Tablero financiero corporativo y personal — Nola Labs" />
 <meta name="theme-color" content="#F0EDE5" />
 <!-- Content Security Policy: solo scripts propios (supabase-js vendorizado), conexión únicamente a la nube del tablero -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://baqevhsyawugvekqbwsm.supabase.co wss://baqevhsyawugvekqbwsm.supabase.co; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://baqevhsyawugvekqbwsm.supabase.co wss://baqevhsyawugvekqbwsm.supabase.co; frame-src https://challenges.cloudflare.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 20 L80 80 L64 80 L50 50 L36 80 L20 80 Z' fill='%23004643'/%3E%3Ccircle cx='86' cy='74' r='7' fill='%237ED3B2'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -149,12 +149,12 @@
 <div class="chart-tip" id="tip"></div>
 <div id="toast"></div>
 <input type="file" id="docFile" hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx,.csv,application/pdf,image/*" />
-<input type="file" id="bankFile" hidden accept=".xlsx" />
+<input type="file" id="bankFile" hidden accept=".xlsx,.pdf" multiple />
 
 <script src="vendor/supabase.js?v=2.116.0"></script>
 <script src="motion.js?v=4"></script>
 <script src="app.js?v=7"></script>
-<script src="modules.js?v=7"></script>
-<script src="bank.js?v=7"></script>
+<script src="modules.js?v=8"></script>
+<script src="bank.js?v=8"></script>
 </body>
 </html>

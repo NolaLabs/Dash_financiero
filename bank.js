@@ -67,6 +67,85 @@ async function readXlsxRows(file) {
   return rows;
 }
 
+/* ========================================================= PDF (pdf.js vendorizado) → líneas de texto */
+let pdfjsPromise = null;
+function loadPdfjs() {
+  if (!pdfjsPromise) pdfjsPromise = import('./vendor/pdf.min.mjs').then(lib => { lib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs'; return lib; });
+  return pdfjsPromise;
+}
+// Reconstruye las líneas de cada página agrupando los fragmentos por su coordenada vertical
+async function readPdfLines(file, password) {
+  const lib = await loadPdfjs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  let doc;
+  try { doc = await lib.getDocument({ data, password: password || undefined }).promise; }
+  catch (e) { if (e && /password/i.test(e.name || '')) { const err = userErr(password ? 'Clave del PDF incorrecta.' : 'Este PDF tiene clave.'); err.needsPassword = true; throw err; } throw e; }
+  const lines = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const rows = [];
+    tc.items.forEach(it => {
+      if (!it.str || !it.str.trim()) return;
+      const x = it.transform[4], y = Math.round(it.transform[5] * 2) / 2;
+      let row = rows.find(r => Math.abs(r.y - y) <= 2.5);
+      if (!row) { row = { y, items: [] }; rows.push(row); }
+      row.items.push({ x, s: it.str });
+    });
+    rows.sort((a, b) => b.y - a.y);
+    rows.forEach(r => { r.items.sort((a, b) => a.x - b.x); lines.push(r.items.map(i => i.s.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ')); });
+    lines.push('');
+  }
+  try { doc.destroy(); } catch (e) {}
+  return lines;
+}
+function bankDetectFormat(file, sample) {
+  if (/\.xlsx$/i.test(file.name)) return 'bancolombia-xlsx';
+  if (/\.pdf$/i.test(file.name)) { const t = (sample || []).join(' '); if (/Cuenta Nu|Nu Placa|Nu Financiera/i.test(t)) return 'nu-pdf'; }
+  return null;
+}
+
+/* ========================================================= PARSER NU (PDF) */
+const NU_MESES = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, oct: 10, nov: 11, dic: 12 };
+const nuAmt = s => { const t = String(s).replace(/\$/g, '').replace(/\./g, '').replace(',', '.'); const n = parseFloat(t); return isFinite(n) ? n : null; };
+function parseNu(lines) {
+  const all = lines.join('\n');
+  const pm = /(\d{2}) - (\d{2}) ([A-Za-z]{3}) (\d{4})/.exec(all);
+  if (!pm) throw userErr('No encontré el período del extracto de Nu.');
+  const mon = NU_MESES[pm[3].toLowerCase()] || 1, year = +pm[4];
+  const period = { from: `${year}-${String(mon).padStart(2, '0')}-${pm[1]}`, to: `${year}-${String(mon).padStart(2, '0')}-${pm[2]}` };
+  let acct = '';
+  const am = /N[úu]mero de Cuenta[^\n]*\n[^\n]*?\b(\d{6,})\b/.exec(all) || /N[úu]mero de Cuenta\s+(\d{6,})/.exec(all);
+  if (am) acct = am[1];
+  const lab = re => { const m = re.exec(all); return m ? nuAmt(m[1]) : null; };
+  const summary = { prev: lab(/Tu dinero al inicio del mes\s+([+-]?\$[\d.,]+)/), credits: lab(/Lo que entr[óo] a tu cuenta\s+([+-]?\$[\d.,]+)/), debits: lab(/Lo que sali[óo] de tu cuenta\s+([+-]?\$[\d.,]+)/), gmf: lab(/Impuesto del 4x1000\s+([+-]?\$[\d.,]+)/), yieldTotal: lab(/Rendimiento total de tu cuenta\s+([+-]?\$[\d.,]+)/), final: lab(/Tu dinero a final del mes\s+([+-]?\$[\d.,]+)/) };
+  const movs = []; let inMov = false, lastDate = null;
+  lines.forEach(ln => {
+    const s = ln.trim();
+    if (/^Movimientos$/i.test(s)) { inMov = true; return; }
+    if (/Tienes preguntas sobre tu extracto|Puedes contactar al Defensor/i.test(s)) { inMov = false; return; }
+    if (!inMov || !s) return;
+    let m;
+    if ((m = /^(\d{2}) ([A-Za-z]{3}) (.+?) ([+-]\$[\d.,]+)$/.exec(s))) {
+      const mm = NU_MESES[m[2].toLowerCase()] || mon;
+      lastDate = `${year}-${String(mm).padStart(2, '0')}-${m[1]}`;
+      movs.push({ date: lastDate, desc: m[3].trim(), ref: '', amount: nuAmt(m[4]), balance: null });
+    } else if ((m = /^(Rendimiento total de tu cuenta) ([+-]\$[\d.,]+)$/.exec(s))) {
+      movs.push({ date: period.to, desc: m[1], ref: '', amount: nuAmt(m[2]), balance: null });
+    } else if ((m = /^(Impuesto del 4x1000|.+?) ([+-]\$[\d.,]+)$/.exec(s)) && lastDate && !/^(Lo que|Tu dinero|Costos por|Dinero en)/i.test(s)) {
+      movs.push({ date: lastDate, desc: m[1].trim(), ref: '', amount: nuAmt(m[2]), balance: null });
+    }
+  });
+  // verificación: las entradas y salidas listadas deben cuadrar con el resumen del extracto
+  let balanceOk = false;
+  if (summary.credits != null && summary.debits != null) {
+    const ins = sum(movs.filter(x => x.amount > 0 && !/^Rendimiento/i.test(x.desc)).map(x => x.amount));
+    const outs = sum(movs.filter(x => x.amount < 0 && !/^Impuesto/i.test(x.desc)).map(x => -x.amount));
+    balanceOk = Math.abs(ins - summary.credits) < 1 && Math.abs(outs - Math.abs(summary.debits)) < 1;
+  }
+  return { bank: 'Nu', acct, acctLast4: acct.slice(-4), holder: '', period, summary, movs, balanceOk };
+}
+
 /* ========================================================= PARSER BANCOLOMBIA */
 function bankNum(s) {
   if (s == null) return null;
@@ -114,7 +193,19 @@ function defaultBankRules() {
     R('TRANSFERENCIA DESDE NEQUI', { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi' }),
     R('TRANSFERENCIA CTA SUC VIRTUAL', { type: 'auto', category: 'transferencia', party: 'Cuenta propia', review: true }),
     R('DEBITO POR ABONO CARTERA', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (cuota)' }),
-    R('NU COMPANIA', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Nu (tarjeta)' }),
+    R('NU COMPANIA', { type: 'auto', category: 'transferencia', party: 'Cuenta Nu (propia)' }),
+    R('COMPENSAR', { type: 'egreso', category: 'seguridad_social', party: 'Compensar (PILA)' }),
+    R('APORTES EN LINEA', { type: 'egreso', category: 'seguridad_social', party: 'Aportes en Línea (PILA)' }),
+    R('SOI ', { type: 'egreso', category: 'seguridad_social', party: 'SOI (PILA)' }),
+    R('ICETEX', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Icetex' }),
+    R('IMPUESTO DEL 4X1000', { type: 'egreso', category: 'impuestos', subcat: 'bancario', party: 'Banco · 4x1000' }),
+    R('RENDIMIENTO TOTAL', { type: 'ingreso', category: 'bancario', subcat: 'bancario', party: 'Nu · rendimientos' }),
+    R('DEPOSITASTE VIA PSE', { type: 'ingreso', category: 'transferencia', party: 'Cuenta propia' }),
+    R('RESEND', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Resend', tool: true }),
+    R('FONTSPRING', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Fontspring', tool: true }),
+    R('FIGMA', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Figma', tool: true }),
+    R('NOTION', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Notion', tool: true }),
+    R('MAKE.COM', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Make', tool: true }),
     R('PAGO CREDITO', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito' }),
     R('DLO*DIDI', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Didi' }),
     R('UBER', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Uber' }),
@@ -155,7 +246,18 @@ function defaultBankRules() {
 function bankRules() { if (!S.bank) S.bank = {}; if (!Array.isArray(S.bank.rules)) S.bank.rules = []; return S.bank.rules.concat(defaultBankRules()); }
 const bankPartyFrom = (desc, prefix) => desc.slice(desc.toUpperCase().indexOf(prefix) + prefix.length).trim().replace(/\s+/g, ' ');
 const nameTokens = () => String((S.profile && S.profile.name) || '').toUpperCase().split(/\s+/).filter(x => x.length > 2);
-function looksLikeOwner(name) { const t = nameTokens(); if (!t.length) return false; const u = String(name).toUpperCase(); return t.filter(x => u.includes(x.slice(0, 5))).length >= 2; }
+const normTxt = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+// Es una cuenta propia si aparece el primer nombre del perfil y al menos un apellido
+function looksLikeOwner(name) { const t = nameTokens().map(x => normTxt(x)); if (t.length < 2) return false; const u = normTxt(name); return u.includes(t[0].slice(0, 5)) && t.slice(1).some(x => u.includes(x.slice(0, 5))); }
+const tokensOf = s => normTxt(s).split(/[^A-Z0-9]+/).filter(x => x.length >= 3);
+// ¿La descripción menciona a alguien del equipo / un cliente / una licencia? (todos los tokens del nombre presentes)
+function matchByName(desc, list, nameOf) {
+  const u = normTxt(desc);
+  return (list || []).find(x => { const tk = tokensOf(nameOf(x)); return tk.length && tk.every(t => u.includes(t)); }) || null;
+}
+const matchTeam = desc => matchByName(desc, S.team, t => t.name);
+const matchClient = desc => matchByName(desc, (S.clients || []).concat((S.oneOffs || []).map(o => ({ name: o.client }))), c => c.name);
+const matchLicense = desc => matchByName(desc, S.licenses, l => l.name);
 // Clasifica un movimiento: devuelve { type, category, subcat, party, review, ruleId }
 function bankClassify(mv, side) {
   const D = mv.desc.toUpperCase(); const inc = mv.amount > 0;
@@ -168,8 +270,18 @@ function bankClassify(mv, side) {
     if (r.tool && side === 'empresa') { category = 'herramientas'; }
     return { type, category, subcat, party: r.party || '', review: !!r.review, ruleId: r.id };
   }
+  // personas y empresas que el tablero ya conoce
+  const team = !inc ? matchTeam(mv.desc) : null;
+  if (team) return { type: 'egreso', category: 'nomina', subcat: null, party: team.name, review: false, teamId: team.id };
+  const client = inc ? matchClient(mv.desc) : null;
+  if (client) return { type: 'ingreso', category: 'cliente', subcat: null, party: client.name, review: false };
+  const lic = !inc ? matchLicense(mv.desc) : null;
+  if (lic) return { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: lic.name, review: false, licenseId: lic.id };
   // descriptores estructurados
   let m;
+  if ((m = /^Recibiste de\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : (side === 'empresa' ? 'cliente' : 'otro_ingreso'), subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
+  if ((m = /^Enviaste a\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
+  if ((m = /^Compra en\s+(.+?)(?:\s+con tarjeta.*)?$/i.exec(mv.desc))) return { type: 'egreso', category: 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: side === 'empresa' }; // desde la cuenta empresa: confirmá si fue gasto del negocio (proveedores)
   if ((m = /^PAGO INTERBANC\s+(.+)$/i.exec(mv.desc)) || (m = /^PAGO DE PROV\s+(.+)$/i.exec(mv.desc))) return { type: inc ? 'ingreso' : 'egreso', category: inc ? 'cliente' : 'proveedores', subcat: null, party: m[1].trim(), review: true };
   if ((m = /^TRANSF DE\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : 'otro_ingreso', subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
   if ((m = /^TRANSF A\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: true }; }
@@ -187,13 +299,25 @@ function bankRuleHint(desc) {
 
 /* ========================================================= IMPORTACIÓN */
 let bankImp = null; // { parsed, side, rows, skipTiny, setBalance, fileName }
+let bankQueue = [];  // archivos pendientes cuando se eligen varios
 // Huella compacta del movimiento (cuenta + fecha + monto + descripción + saldo) para no importar dos veces lo mismo
 function fnv1a(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); }
 const bankKeyOf = (acct4, mv) => { const s = `${acct4}|${mv.date}|${mv.amount}|${mv.desc}|${mv.balance == null ? '' : mv.balance}`; return acct4 + ':' + fnv1a(s) + fnv1a(s.split('').reverse().join('')); };
 function bankAccounts() { if (!S.bank) S.bank = {}; if (!S.bank.accounts || typeof S.bank.accounts !== 'object') S.bank.accounts = {}; return S.bank.accounts; }
-async function bankImportFile(file) {
-  const rows = await readXlsxRows(file);
-  const parsed = parseBancolombia(rows);
+async function bankImportFile(file, opts = {}) {
+  let parsed;
+  if (/\.xlsx$/i.test(file.name)) parsed = parseBancolombia(await readXlsxRows(file));
+  else if (/\.pdf$/i.test(file.name)) {
+    let lines; let password = opts.password || '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { lines = await readPdfLines(file, password); break; }
+      catch (e) { if (!e.needsPassword) throw e; const p = prompt((attempt ? 'Clave incorrecta. ' : '') + 'Este PDF tiene clave (Nu usa tu número de cédula):'); if (p == null) throw userErr('Importación cancelada'); password = p.trim(); bankLastPassword = password; }
+    }
+    if (!lines) throw userErr('No se pudo abrir el PDF');
+    const fmt = bankDetectFormat(file, lines);
+    if (fmt !== 'nu-pdf') throw userErr('No reconozco este PDF. Por ahora se importan los extractos PDF de Nu y el XLSX de Bancolombia.');
+    parsed = parseNu(lines);
+  } else throw userErr('Formato no soportado: subí el XLSX de Bancolombia o el PDF de Nu.');
   const acc = bankAccounts()[parsed.acctLast4];
   const side = acc ? acc.side : 'personal';
   // conciliar el saldo solo si el extracto es reciente (un extracto viejo no representa el saldo de hoy)
@@ -211,7 +335,7 @@ function bankBuildRows() {
     // coincidencia con un movimiento manual (mismo monto, ±3 días, misma cuenta) → se enlaza en vez de duplicar
     const twin = !dup ? (S.ledger || []).find(m => !m.bankKey && m.account === side && Math.abs((m.type === 'ingreso' ? m.net : -m.net) - mv.amount) < 1 && Math.abs(daysUntil(m.date) - daysUntil(mv.date)) <= 3) : null;
     const tiny = c.category === 'bancario' && Math.abs(mv.amount) < 1000;
-    return { i, mv, key, dup, twinId: twin ? twin.id : null, type: c.type, category: c.category, subcat: c.subcat, party: c.party, review: c.review, include: !dup && !(bankImp.skipTiny && tiny), tiny };
+    return { i, mv, key, dup, twinId: twin ? twin.id : null, type: c.type, category: c.category, subcat: c.subcat, party: c.party, review: c.review, teamId: c.teamId || null, licenseId: c.licenseId || null, include: !dup && !(bankImp.skipTiny && tiny), tiny };
   });
 }
 function bankSummary() {
@@ -221,12 +345,33 @@ function bankSummary() {
   return { n: rows.length, dup: bankImp.rows.filter(r => r.dup).length, twins: rows.filter(r => r.twinId).length, review: rows.filter(r => r.review).length, ing, egr, transfers: rows.filter(r => r.category === 'transferencia').length };
 }
 function bankCommit() {
-  const P = bankImp.parsed, side = bankImp.side; let added = 0, linked = 0;
+  const P = bankImp.parsed, side = bankImp.side; let added = 0, linked = 0, linkedPay = 0, linkedPila = 0;
   bankImp.rows.filter(r => r.include).forEach(r => {
     const mv = r.mv; const isTransfer = r.category === 'transferencia';
     if (r.twinId) { const t = S.ledger.find(m => m.id === r.twinId); if (t) { t.bankKey = r.key; t.bankAcct = P.acctLast4; t.bankDesc = mv.desc; if (!t.subcat && r.subcat) t.subcat = r.subcat; linked++; return; } }
     const entry = { id: uid(), date: mv.date, type: mv.amount > 0 ? 'ingreso' : 'egreso', account: side, category: r.category, subcat: r.subcat || null, party: r.party || '', concept: mv.desc, gross: Math.abs(mv.amount), withholding: 0, net: Math.abs(mv.amount), status: 'hecho', applied: true, balanceBy: 'banco', source: 'banco', bankKey: r.key, bankAcct: P.acctLast4, notes: r.review && !isTransfer ? 'Clasificación automática: revisar' : '' };
     if (mv.ref) entry.bankRef = mv.ref;
+    const ym = ymOf(mv.date), amt = Math.abs(mv.amount);
+    // cruces automáticos: el pago del banco marca Pagos del mes, la cuenta de cobro y la planilla
+    if (r.teamId && r.category === 'nomina') {
+      const key = 'team:' + r.teamId; entry.refKey = ym + '|' + key;
+      S.ledger = S.ledger.filter(m => !(m.source === 'pago' && m.refKey === entry.refKey)); // el hecho bancario reemplaza el registro manual
+      if (!S.payments.months[ym]) S.payments.months[ym] = { paid: {} };
+      if (!S.payments.months[ym].paid[key]) S.payments.months[ym].paid[key] = { amount: amt, at: parseISO(mv.date).getTime(), applied: false, bank: true };
+      const c = ccGet(r.teamId, ym); if (c.status !== 'pagada') { c.status = 'pagada'; c.paidAt = mv.date; if (!c.amount) c.amount = amt; }
+      linkedPay++;
+    } else if (r.licenseId && r.category === 'herramientas') {
+      const key = 'lic:' + r.licenseId; entry.refKey = ym + '|' + key;
+      S.ledger = S.ledger.filter(m => !(m.source === 'pago' && m.refKey === entry.refKey));
+      if (!S.payments.months[ym]) S.payments.months[ym] = { paid: {} };
+      if (!S.payments.months[ym].paid[key]) S.payments.months[ym].paid[key] = { amount: amt, at: parseISO(mv.date).getTime(), applied: false, bank: true };
+      linkedPay++;
+    } else if (r.category === 'seguridad_social' && mv.amount < 0) {
+      const p = pilaGet(ym);
+      if (!p.paidAt) { p.total = amt; p.paidAt = mv.date; p.account = side; p.notes = (p.notes ? p.notes + ' · ' : '') + 'Detectada en el extracto: ' + mv.desc; }
+      entry.refKey = 'pila|' + p.id; linkedPila++;
+      S.ledger = S.ledger.filter(m => !(m.source === 'pila' && m.refKey === entry.refKey));
+    }
     S.ledger.push(ledgerNormalize(entry));
     added++;
   });
@@ -238,7 +383,7 @@ function bankCommit() {
   if (bankImp.setBalance && a.main && a.reconciledTo === P.period.to && P.summary) {
     if (side === 'personal') S.liquidity.ahorrosPersonalesHoy = P.summary.final; else S.liquidity.cajaEmpresaHoy = P.summary.final;
   }
-  const res = { added, linked, period: P.period, side };
+  const res = { added, linked, linkedPay, linkedPila, period: P.period, side, bank: P.bank };
   bankImp = null;
   return res;
 }
@@ -268,7 +413,7 @@ function bankPanelHTML() {
     <td class="nowrap">${r.dup ? '' : `<button class="btn btn--ghost btn--xs" data-act="bk:rule" data-p="${r.i}" title="Crear una regla para clasificar así las próximas veces">${ico('plus')} regla</button>`}</td>
   </tr>`).join('');
   return `<div class="card warm mb-16" id="bankPanel">
-    <div class="card-h"><h3>Importar extracto · ${esc(P.bank)} ···${esc(P.acctLast4)}</h3><button class="iconbtn" data-act="bk:cancel" title="Cancelar">${ico('x')}</button></div>
+    <div class="card-h"><h3>Importar extracto · ${esc(P.bank)} ···${esc(P.acctLast4)}${bankQueue.length ? ` <span class="cat">quedan ${bankQueue.length} archivo${bankQueue.length > 1 ? 's' : ''} más</span>` : ''}</h3><button class="iconbtn" data-act="bk:cancel" title="Cancelar">${ico('x')}</button></div>
     <div class="stat-row mb-16">
       <div class="mini-stat"><div class="l">Período</div><div class="v" style="font-size:18px">${fmtDate(P.period.from)} → ${fmtDate(P.period.to)}</div></div>
       <div class="mini-stat"><div class="l">Saldo inicial → final</div><div class="v" style="font-size:18px">${P.summary ? fmtShort(P.summary.prev) + ' → ' + fmtCOP(P.summary.final) : '—'}</div><div class="hint" style="margin:2px 0 0">${P.balanceOk ? 'saldo corrido verificado' : 'saldo corrido con diferencias'}</div></div>
@@ -314,11 +459,13 @@ function bankPanelChange(t) {
 }
 function bankPanelClick(act, p) {
   switch (act) {
-    case 'bk:cancel': bankImp = null; re(); return true;
+    case 'bk:cancel': bankImp = null; bankQueue = []; re(); return true;
     case 'bk:commit': {
       const res = bankCommit();
-      toast(`${res.added} movimientos importados${res.linked ? ` · ${res.linked} enlazados` : ''} · ${res.side === 'personal' ? 'cuenta personal' : 'cuenta empresa'}`, 'ok');
-      mvYear = res.period.to.slice(0, 4); mvAcc = res.side; re(); return true; }
+      toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}`, 'ok');
+      mvYear = res.period.to.slice(0, 4); mvAcc = res.side; re();
+      if (bankQueue.length) bankNext();
+      return true; }
     case 'bk:rule': {
       const r = bankImp.rows[+p[0]]; if (!r) return true;
       const match = prompt('Crear regla: clasificar así toda descripción que contenga…', bankRuleHint(r.mv.desc));
@@ -331,15 +478,21 @@ function bankPanelClick(act, p) {
   }
   return false;
 }
-async function onBankFileChosen(ev) {
-  const file = ev.target.files && ev.target.files[0]; ev.target.value = '';
-  if (!file) return;
+let bankLastPassword = ''; // se reutiliza entre archivos de la misma tanda (no se guarda)
+async function bankNext() {
+  const file = bankQueue.shift(); if (!file) return;
   try {
-    if (!/\.xlsx$/i.test(file.name)) throw userErr('Por ahora se importa el extracto en XLSX (el que descargás del banco).');
-    await bankImportFile(file);
+    await bankImportFile(file, { password: bankLastPassword });
     mvFormOpen = false;
     if (current !== 'movimientos') go('movimientos'); else re();
     const el = $('#bankPanel'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (e) { console.warn('bank import', e); toast(userMsg(e, 'No se pudo leer el extracto'), 'err'); }
+  } catch (e) { console.warn('bank import', e); toast((file.name + ': ') + userMsg(e, 'No se pudo leer el extracto'), 'err'); if (bankQueue.length) bankNext(); }
+}
+async function onBankFileChosen(ev) {
+  const files = Array.from(ev.target.files || []); ev.target.value = '';
+  if (!files.length) return;
+  // orden cronológico por nombre (Nu: CuentaNu_XXX_2026-03.pdf; Bancolombia: Extracto_202606_…)
+  bankQueue = files.sort((a, b) => a.name.localeCompare(b.name));
+  bankNext();
 }
 document.addEventListener('DOMContentLoaded', () => { const bf = $('#bankFile'); if (bf) bf.addEventListener('change', onBankFileChosen); });

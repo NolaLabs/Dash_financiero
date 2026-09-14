@@ -186,6 +186,9 @@ const LEDGER_CATS = {
   otro_egreso:      { label: 'Otro egreso',          type: 'egreso' },
 };
 const catLabel = k => (LEDGER_CATS[k] || { label: k || '—' }).label;
+// Ámbito de un movimiento: empresa o personal según la categoría (la cuenta física puede estar mezclada)
+const CAT_SCOPE = { cliente: 'empresa', capital: 'empresa', nomina: 'empresa', herramientas: 'empresa', seguridad_social: 'empresa', proveedores: 'empresa', salario_empleo: 'personal', gasto_personal: 'personal', deuda: 'personal' };
+function ledgerScope(m) { if (m.category === 'salario_ceo') return 'ambos'; return CAT_SCOPE[m.category] || (m.account === 'personal' ? 'personal' : 'empresa'); }
 
 function ledgerNormalize(m) {
   m.id = m.id || uid();
@@ -239,7 +242,7 @@ function ledgerSyncPayment(ym, key, it, on) {
   if (!Array.isArray(S.ledger)) S.ledger = [];
   const refKey = ym + '|' + key;
   if (!on) { S.ledger = S.ledger.filter(m => !(m.source === 'pago' && m.refKey === refKey)); return; }
-  if (S.ledger.some(m => m.source === 'pago' && m.refKey === refKey)) return;
+  if (S.ledger.some(m => m.refKey === refKey)) return; // ya existe (manual o detectado en el extracto)
   const side = it ? it.side : sideForKey(key);
   const cat = (key.indexOf('team:') === 0 || key === 'prest') ? 'nomina' : key.indexOf('lic:') === 0 ? 'herramientas' : key === 'ceo' ? 'salario_ceo' : 'gasto_personal';
   const today = localISO();
@@ -263,7 +266,7 @@ function ledgerStats(s) {
       if (m.type === 'ingreso') { pendingIn += net; pendingInN++; oldestPending = Math.max(oldestPending, daysSince(m.date)); } else pendingOut += net;
       return;
     }
-    const entries = m.category === 'salario_ceo' ? [{ acc: 'empresa', type: 'egreso' }, { acc: 'personal', type: 'ingreso' }] : [{ acc: m.account, type: m.type }, { acc: 'todas', type: m.type }];
+    const entries = m.category === 'salario_ceo' ? [{ acc: 'empresa', type: 'egreso' }, { acc: 'personal', type: 'ingreso' }] : [{ acc: ledgerScope(m), type: m.type }, { acc: 'todas', type: m.type }];
     entries.forEach(e => {
       const f = e.type === 'ingreso' ? 'ing' : 'egr';
       if (idx[ym] != null) series[e.acc][idx[ym]][f] += net;
@@ -382,7 +385,7 @@ function rentaOpenYear() {
 function rentaFromLedger(year) {
   const L = (S.ledger || []).filter(m => m.status === 'hecho' && (m.date || '').slice(0, 4) === String(year));
   const byClient = {}; let ret = 0, grossIn = 0;
-  L.filter(m => m.type === 'ingreso' && m.account === 'empresa' && m.category !== 'capital').forEach(m => {
+  L.filter(m => m.type === 'ingreso' && ledgerScope(m) === 'empresa' && m.category !== 'capital').forEach(m => {
     const k = m.party || catLabel(m.category); byClient[k] = byClient[k] || { gross: 0, ret: 0, net: 0 };
     byClient[k].gross += m.gross; byClient[k].ret += m.withholding; byClient[k].net += m.net; ret += m.withholding; grossIn += m.gross;
   });
@@ -575,11 +578,11 @@ function comboChart(el, { labels, bars, line = null, fmt = fmtShort, h = 260 }) 
 let mvAcc = 'empresa', mvYear = String(new Date().getFullYear()), mvType = 'todos', mvFormOpen = false, mvOpenId = null;
 let mvDraft = null;
 function mvNewDraft() { return { date: localISO(), type: 'ingreso', account: 'empresa', category: 'cliente', party: '', concept: '', gross: '', withholding: '', net: '', status: 'hecho', notes: '' }; }
-const ACC_LABEL = { empresa: 'Cuenta empresa', personal: 'Cuenta personal', todas: 'Ambas cuentas' };
+const ACC_LABEL = { empresa: 'Ámbito empresa', personal: 'Ámbito personal', todas: 'Todo' };
 function mvCatOptions(type, sel) { return Object.keys(LEDGER_CATS).filter(k => LEDGER_CATS[k].type === type || LEDGER_CATS[k].type === 'auto').map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(LEDGER_CATS[k].label)}</option>`).join(''); }
 function personalSpendBySubcat(year, acc) {
   const out = {};
-  (S.ledger || []).filter(m => m.status === 'hecho' && m.type === 'egreso' && (acc === 'todas' || m.account === acc) && (m.date || '').slice(0, 4) === String(year) && ['gasto_personal', 'deuda', 'bancario'].includes(m.category)).forEach(m => {
+  (S.ledger || []).filter(m => m.status === 'hecho' && m.type === 'egreso' && (acc === 'todas' || ledgerScope(m) === acc) && (m.date || '').slice(0, 4) === String(year) && ['gasto_personal', 'deuda', 'bancario'].includes(m.category)).forEach(m => {
     const k = m.category === 'deuda' ? 'deuda' : m.category === 'bancario' ? 'bancario' : (m.subcat || 'otros');
     out[k] = (out[k] || 0) + (Number(m.net) || 0);
   });
@@ -594,7 +597,7 @@ function renderMovimientos() {
   const net = cur.ing - cur.egr;
   const years = [...new Set((s.ledger || []).map(m => (m.date || '').slice(0, 4)).filter(Boolean).concat([year]))].sort().reverse();
   const rows = (s.ledger || []).filter(m => (m.date || '').slice(0, 4) === mvYear)
-    .filter(m => mvAcc === 'todas' || m.account === mvAcc || m.category === 'salario_ceo')
+    .filter(m => mvAcc === 'todas' || ledgerScope(m) === mvAcc || m.category === 'salario_ceo')
     .filter(m => mvType === 'todos' || (mvType === 'pendientes' ? m.status === 'pendiente' : m.type === mvType))
     .sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
   const acc = mvAcc === 'todas' ? 'todas' : mvAcc;
@@ -627,7 +630,7 @@ function renderMovimientos() {
       <div class="card-h"><h3>Ingresos vs. egresos · últimos 12 meses</h3><span class="eyebrow">${esc(ACC_LABEL[mvAcc])}</span></div>
       <div id="chart-mv"></div>
       <div class="legend"><div class="li"><span class="sw" style="background:#2D7D6F"></span>Ingresos</div><div class="li"><span class="sw" style="background:#B85C38"></span>Egresos</div><div class="li"><span class="sw" style="background:#004643"></span>Resultado</div></div>
-      <p class="card-note">Solo movimientos hechos (no pendientes). El salario CEO aparece como egreso de la empresa e ingreso personal; en "Ambas" no se cuenta, porque es una transferencia entre tus cuentas.</p>
+      <p class="card-note">Solo movimientos hechos. El ámbito lo define la categoría, no la cuenta física: un pago de cliente que entra a tu cuenta personal cuenta como empresa, y una compra personal desde la cuenta empresa cuenta como personal. Las transferencias entre tus cuentas no cuentan.</p>
     </div>
     <div class="card">
       <div class="card-h"><h3>Rentabilidad ${year}</h3><span class="eyebrow">${esc(ACC_LABEL[mvAcc])}</span></div>
@@ -670,7 +673,7 @@ function mvRowHTML(m) {
     <td class="nowrap">${fmtDate(m.date)}</td>
     <td><span class="party">${esc(m.party || catLabel(m.category))}</span><span class="concept">${esc(m.concept || '')}${m.withholding ? ` · bruto ${fmtShort(m.gross)} − ret. ${fmtShort(m.withholding)}` : ''}</span></td>
     <td><span class="cat">${esc(catLabel(m.category))}</span>${SCn}</td>
-    <td>${m.account === 'personal' ? 'Personal' : 'Empresa'}</td>
+    <td>${ledgerScope(m) === 'personal' ? 'Personal' : ledgerScope(m) === 'ambos' ? 'Ambos' : 'Empresa'}${m.bankAcct ? `<span class="concept">${esc((S.bank && S.bank.accounts && S.bank.accounts[m.bankAcct] && S.bank.accounts[m.bankAcct].label) || ('···' + m.bankAcct))}</span>` : ''}</td>
     <td class="r amt"><span class="${m.category === 'transferencia' ? '' : inc ? 'in' : 'out'}">${inc ? '+' : '−'}${fmtCOP(Math.abs(m.net))}</span></td>
     <td>${chip}</td>
     <td class="nowrap">${m.docId ? `<button class="iconbtn soft" data-act="doc:open" data-p="${m.docId}" title="Ver comprobante">${ico('paperclip')}</button>` : ''}<button class="iconbtn" data-act="mv:del" data-p="${m.id}" title="Eliminar">${ico('trash')}</button></td></tr>`;
