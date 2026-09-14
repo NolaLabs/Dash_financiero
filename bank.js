@@ -191,7 +191,6 @@ function defaultBankRules() {
     R('RETIRO CAJERO', { type: 'egreso', category: 'gasto_personal', subcat: 'efectivo', party: 'Cajero' }),
     R('TRANSFERENCIAS A NEQUI', { type: 'egreso', category: 'gasto_personal', subcat: 'nequi', party: 'Nequi' }),
     R('TRANSFERENCIA DESDE NEQUI', { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi' }),
-    R('TRANSFERENCIA CTA SUC VIRTUAL', { type: 'auto', category: 'transferencia', party: 'Cuenta propia', review: true }),
     R('DEBITO POR ABONO CARTERA', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (cuota)' }),
     R('NU COMPANIA', { type: 'auto', category: 'transferencia', party: 'Cuenta Nu (propia)' }),
     R('COMPENSAR', { type: 'egreso', category: 'seguridad_social', party: 'Compensar (PILA)' }),
@@ -256,6 +255,19 @@ function matchByName(desc, list, nameOf) {
   return (list || []).find(x => { const tk = tokensOf(nameOf(x)); return tk.length && tk.every(t => u.includes(t)); }) || null;
 }
 const matchTeam = desc => matchByName(desc, S.team, t => t.name);
+// Transferencias sin nombre: se reconocen por el monto (cuenta de cobro del mes, pago del equipo, licencia o gasto fijo)
+function matchAmount(mv) {
+  const amt = Math.abs(mv.amount), ym = ymOf(mv.date), near = [addMonths(ym, -1), ym, addMonths(ym, 1)];
+  const cc = (S.cuentasCobro || []).find(c => Math.abs((Number(c.amount) || 0) - amt) < 1 && near.includes(c.ym));
+  if (cc) { const t = S.team.find(x => x.id === cc.personId); if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name + ' · cuenta ' + ymShort(cc.ym), review: false, teamId: t.id, ccId: cc.id, ccYm: cc.ym }; }
+  const t = (S.team || []).find(x => Math.abs((Number(x.pay) || 0) - amt) < 1 && amt > 0);
+  if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name, review: true, teamId: t.id };
+  const l = (S.licenses || []).find(x => x.currency === 'COP' && Math.abs((Number(x.unit) || 0) * (Number(x.qty) || 1) - amt) < 1);
+  if (l) return { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: l.name, review: true, licenseId: l.id };
+  const e = (S.personalExpenses || []).find(x => x.currency === 'COP' && x.period === 'monthly' && Math.abs((Number(x.amount) || 0) - amt) < 1 && amt >= 100000);
+  if (e) { const sub = e.category === 'vivienda' ? 'hogar' : e.category === 'deuda' ? 'deuda' : e.category === 'suscripcion' ? 'suscripciones' : e.category === 'salud' ? 'salud' : 'otros'; return { type: 'egreso', category: e.category === 'deuda' ? 'deuda' : 'gasto_personal', subcat: sub, party: e.name, review: true }; }
+  return null;
+}
 const matchClient = desc => matchByName(desc, (S.clients || []).concat((S.oneOffs || []).map(o => ({ name: o.client }))), c => c.name);
 const matchLicense = desc => matchByName(desc, S.licenses, l => l.name);
 // Clasifica un movimiento: devuelve { type, category, subcat, party, review, ruleId }
@@ -277,6 +289,9 @@ function bankClassify(mv, side) {
   if (client) return { type: 'ingreso', category: 'cliente', subcat: null, party: client.name, review: false };
   const lic = !inc ? matchLicense(mv.desc) : null;
   if (lic) return { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: lic.name, review: false, licenseId: lic.id };
+  // transferencias sin nombre (Bancolombia "CTA SUC VIRTUAL") y envíos a terceros: por monto
+  if (!inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) { const byAmt = matchAmount(mv); if (byAmt) return byAmt; return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: 'Transferencia a cuenta Bancolombia', review: true }; }
+  if (inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Transferencia desde cuenta Bancolombia', review: true };
   // descriptores estructurados
   let m;
   if ((m = /^Recibiste de\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : (side === 'empresa' ? 'cliente' : 'otro_ingreso'), subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
@@ -284,7 +299,7 @@ function bankClassify(mv, side) {
   if ((m = /^Compra en\s+(.+?)(?:\s+con tarjeta.*)?$/i.exec(mv.desc))) return { type: 'egreso', category: 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: side === 'empresa' }; // desde la cuenta empresa: confirmá si fue gasto del negocio (proveedores)
   if ((m = /^PAGO INTERBANC\s+(.+)$/i.exec(mv.desc)) || (m = /^PAGO DE PROV\s+(.+)$/i.exec(mv.desc))) return { type: inc ? 'ingreso' : 'egreso', category: inc ? 'cliente' : 'proveedores', subcat: null, party: m[1].trim(), review: true };
   if ((m = /^TRANSF DE\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : 'otro_ingreso', subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
-  if ((m = /^TRANSF A\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: true }; }
+  if ((m = /^TRANSF A\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); if (!own) { const byAmt = matchAmount(mv); if (byAmt) return Object.assign(byAmt, { party: byAmt.party + ' (' + m[1].trim() + ')' }); } return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: true }; }
   if ((m = /^TRANSFERENCIA A\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: m[1].trim(), review: true };
   if ((m = /^COMPRA (?:EN|INTL)\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: false };
   if ((m = /^PAGO PSE\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: m[1].trim(), review: true };
@@ -335,7 +350,7 @@ function bankBuildRows() {
     // coincidencia con un movimiento manual (mismo monto, ±3 días, misma cuenta) → se enlaza en vez de duplicar
     const twin = !dup ? (S.ledger || []).find(m => !m.bankKey && m.account === side && Math.abs((m.type === 'ingreso' ? m.net : -m.net) - mv.amount) < 1 && Math.abs(daysUntil(m.date) - daysUntil(mv.date)) <= 3) : null;
     const tiny = c.category === 'bancario' && Math.abs(mv.amount) < 1000;
-    return { i, mv, key, dup, twinId: twin ? twin.id : null, type: c.type, category: c.category, subcat: c.subcat, party: c.party, review: c.review, teamId: c.teamId || null, licenseId: c.licenseId || null, include: !dup && !(bankImp.skipTiny && tiny), tiny };
+    return { i, mv, key, dup, twinId: twin ? twin.id : null, type: c.type, category: c.category, subcat: c.subcat, party: c.party, review: c.review, teamId: c.teamId || null, licenseId: c.licenseId || null, ccId: c.ccId || null, ccYm: c.ccYm || null, include: !dup && !(bankImp.skipTiny && tiny), tiny };
   });
 }
 function bankSummary() {
@@ -353,21 +368,22 @@ function bankCommit() {
     if (mv.ref) entry.bankRef = mv.ref;
     const ym = ymOf(mv.date), amt = Math.abs(mv.amount);
     // cruces automáticos: el pago del banco marca Pagos del mes, la cuenta de cobro y la planilla
-    if (r.teamId && r.category === 'nomina') {
-      const key = 'team:' + r.teamId; entry.refKey = ym + '|' + key;
+    if (r.teamId && r.category === 'nomina' && !r.review) {
+      const ymPay = r.ccYm || ym; const key = 'team:' + r.teamId; entry.refKey = ymPay + '|' + key;
       S.ledger = S.ledger.filter(m => !(m.source === 'pago' && m.refKey === entry.refKey)); // el hecho bancario reemplaza el registro manual
-      if (!S.payments.months[ym]) S.payments.months[ym] = { paid: {} };
-      if (!S.payments.months[ym].paid[key]) S.payments.months[ym].paid[key] = { amount: amt, at: parseISO(mv.date).getTime(), applied: false, bank: true };
-      const c = ccGet(r.teamId, ym); if (c.status !== 'pagada') { c.status = 'pagada'; c.paidAt = mv.date; if (!c.amount) c.amount = amt; }
+      if (!S.payments.months[ymPay]) S.payments.months[ymPay] = { paid: {} };
+      if (!S.payments.months[ymPay].paid[key]) S.payments.months[ymPay].paid[key] = { amount: amt, at: parseISO(mv.date).getTime(), applied: false, bank: true };
+      const c = (r.ccId && (S.cuentasCobro || []).find(x => x.id === r.ccId)) || ccGet(r.teamId, ymPay);
+      if (c.status !== 'pagada') { c.status = 'pagada'; c.paidAt = mv.date; if (!c.amount) c.amount = amt; }
       linkedPay++;
-    } else if (r.licenseId && r.category === 'herramientas') {
+    } else if (r.licenseId && r.category === 'herramientas' && !r.review) {
       const key = 'lic:' + r.licenseId; entry.refKey = ym + '|' + key;
       S.ledger = S.ledger.filter(m => !(m.source === 'pago' && m.refKey === entry.refKey));
       if (!S.payments.months[ym]) S.payments.months[ym] = { paid: {} };
       if (!S.payments.months[ym].paid[key]) S.payments.months[ym].paid[key] = { amount: amt, at: parseISO(mv.date).getTime(), applied: false, bank: true };
       linkedPay++;
-    } else if (r.category === 'seguridad_social' && mv.amount < 0) {
-      const p = pilaGet(ym);
+    } else if (r.category === 'seguridad_social' && mv.amount < 0 && !r.review) {
+      const p = (S.pila || []).find(x => Math.abs((Number(x.total) || 0) - amt) < 1 && x.paidAt && Math.abs(daysUntil(x.paidAt) - daysUntil(mv.date)) <= 7) || pilaGet(ym);
       if (!p.paidAt) { p.total = amt; p.paidAt = mv.date; p.account = side; p.notes = (p.notes ? p.notes + ' · ' : '') + 'Detectada en el extracto: ' + mv.desc; }
       entry.refKey = 'pila|' + p.id; linkedPila++;
       S.ledger = S.ledger.filter(m => !(m.source === 'pila' && m.refKey === entry.refKey));
@@ -410,7 +426,7 @@ function bankPanelHTML() {
     <td><select data-bk="${r.i}|category" ${r.dup ? 'disabled' : ''}>${catOpts(r.category)}</select></td>
     <td>${r.category === 'gasto_personal' || r.category === 'transferencia' || r.category === 'deuda' || r.category === 'bancario' ? `<select data-bk="${r.i}|subcat" ${r.dup ? 'disabled' : ''}>${subOpts(r.subcat)}</select>` : ''}</td>
     <td><input type="text" value="${esc(r.party || '')}" data-bk="${r.i}|party" placeholder="quién" ${r.dup ? 'disabled' : ''}></td>
-    <td class="nowrap">${r.dup ? '' : `<button class="btn btn--ghost btn--xs" data-act="bk:rule" data-p="${r.i}" title="Crear una regla para clasificar así las próximas veces">${ico('plus')} regla</button>`}</td>
+    <td class="nowrap">${r.dup ? '' : `${r.review && r.include ? `<button class="btn btn--signature btn--xs" data-act="bk:ok" data-p="${r.i}" title="Confirmar esta clasificación">${ico('check')} ok</button> ` : ''}<button class="btn btn--ghost btn--xs" data-act="bk:rule" data-p="${r.i}" title="Crear una regla para clasificar así las próximas veces">${ico('plus')} regla</button>`}</td>
   </tr>`).join('');
   return `<div class="card warm mb-16" id="bankPanel">
     <div class="card-h"><h3>Importar extracto · ${esc(P.bank)} ···${esc(P.acctLast4)}${bankQueue.length ? ` <span class="cat">quedan ${bankQueue.length} archivo${bankQueue.length > 1 ? 's' : ''} más</span>` : ''}</h3><button class="iconbtn" data-act="bk:cancel" title="Cancelar">${ico('x')}</button></div>
@@ -428,7 +444,7 @@ function bankPanelHTML() {
       </div>
       <div class="right"><button class="btn btn--primary" data-act="bk:commit">Importar ${s.n} movimientos</button></div>
     </div>
-    <p class="hint">Las filas marcadas en color piden revisión: son pagos de clientes o transferencias que el tablero no puede distinguir solo. Corregí la categoría y usá "regla" para que la próxima vez se clasifiquen solas. Las transferencias entre tus cuentas no cuentan como ingreso ni gasto.</p>
+    <p class="hint">Las filas en color son sugerencias por revisar (transferencias sin nombre, pagos a terceros, compras desde la cuenta empresa). Con "ok" las confirmás; si cambiás la categoría quedan confirmadas. Solo las filas confirmadas marcan pagos del equipo, licencias o planillas. "regla" hace que la próxima vez se clasifiquen solas. Las transferencias entre tus cuentas no cuentan como ingreso ni gasto.</p>
     <div class="tscroll" style="max-height:520px;overflow:auto"><table class="tbl bk-table"><thead><tr><th></th><th>Fecha</th><th>Descripción del banco</th><th class="r">Monto</th><th>Categoría</th><th>Detalle</th><th>Quién</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
@@ -460,6 +476,7 @@ function bankPanelChange(t) {
 function bankPanelClick(act, p) {
   switch (act) {
     case 'bk:cancel': bankImp = null; bankQueue = []; re(); return true;
+    case 'bk:ok': { const r = bankImp.rows[+p[0]]; if (r) r.review = false; re(); return true; }
     case 'bk:commit': {
       const res = bankCommit();
       toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}`, 'ok');
