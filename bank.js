@@ -101,7 +101,7 @@ async function readPdfLines(file, password) {
 }
 function bankDetectFormat(file, sample) {
   if (/\.xlsx$/i.test(file.name)) return 'bancolombia-xlsx';
-  if (/\.pdf$/i.test(file.name)) { const t = (sample || []).join(' '); if (/Cuenta Nu|Nu Placa|Nu Financiera/i.test(t)) return 'nu-pdf'; }
+  if (/\.pdf$/i.test(file.name)) { const t = (sample || []).join(' '); if (/NEQUI S\.A\./i.test(t)) return 'nequi-pdf'; if (/Cuenta Nu|Nu Placa|Nu Financiera/i.test(t)) return 'nu-pdf'; }
   return null;
 }
 
@@ -144,6 +144,30 @@ function parseNu(lines) {
     balanceOk = Math.abs(ins - summary.credits) < 1 && Math.abs(outs - Math.abs(summary.debits)) < 1;
   }
   return { bank: 'Nu', acct, acctLast4: acct.slice(-4), holder: '', period, summary, movs, balanceOk };
+}
+
+/* ========================================================= PARSER NEQUI (PDF) */
+const nequiAmt = s => { const n = parseFloat(String(s).replace(/\$/g, '').replace(/,/g, '')); return isFinite(n) ? n : null; };
+function parseNequi(lines) {
+  const all = lines.join('\n');
+  const pm = /per.{1,3}odo de:\s*(\d{4})\/(\d{2})\/(\d{2}) a (\d{4})\/(\d{2})\/(\d{2})/i.exec(all); // 'período' puede venir con el acento como carácter combinado
+  if (!pm) throw userErr('No encontré el período del extracto de Nequi.');
+  const period = { from: `${pm[1]}-${pm[2]}-${pm[3]}`, to: `${pm[4]}-${pm[5]}-${pm[6]}` };
+  const am = /N[úu]mero de cuenta de ahorro:\s*(\d{6,})/.exec(all); const acct = am ? am[1] : '';
+  const lab = re => { const m = re.exec(all); return m ? nequiAmt(m[1]) : null; };
+  const summary = { prev: lab(/Saldo anterior\s+\$(-?[\d,]+\.\d{2})/), credits: lab(/Total abonos\s+\$(-?[\d,]+\.\d{2})/), debits: lab(/Total cargos\s+\$(-?[\d,]+\.\d{2})/), final: lab(/Saldo actual\s+\$(-?[\d,]+\.\d{2})/) };
+  const movs = [];
+  lines.forEach(ln => {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4}) (.+?) \$(-?[\d,]+\.\d{2}) \$(-?[\d,]+\.\d{2})$/.exec(ln.trim());
+    if (m) movs.push({ date: `${m[3]}-${m[2]}-${m[1]}`, desc: m[4].replace(/\s+/g, ' ').trim(), ref: '', amount: nequiAmt(m[5]), balance: nequiAmt(m[6]) });
+  });
+  movs.reverse(); // el extracto lista del más reciente al más antiguo
+  let balanceOk = false;
+  if (summary.credits != null && summary.debits != null) {
+    const ins = sum(movs.filter(x => x.amount > 0).map(x => x.amount)), outs = sum(movs.filter(x => x.amount < 0).map(x => -x.amount));
+    balanceOk = Math.abs(ins - summary.credits) < 1 && Math.abs(outs - Math.abs(summary.debits)) < 1;
+  }
+  return { bank: 'Nequi', acct, acctLast4: acct.slice(-4), holder: '', period, summary, movs, balanceOk };
 }
 
 /* ========================================================= PARSER BANCOLOMBIA */
@@ -189,8 +213,11 @@ function defaultBankRules() {
     R('GRAVAMEN', { type: 'egreso', category: 'impuestos', subcat: 'bancario', party: 'Banco · 4x1000' }),
     R('RETEFUENTE', { type: 'egreso', category: 'impuestos', subcat: 'bancario', party: 'Retención' }),
     R('RETIRO CAJERO', { type: 'egreso', category: 'gasto_personal', subcat: 'efectivo', party: 'Cajero' }),
-    R('TRANSFERENCIAS A NEQUI', { type: 'egreso', category: 'gasto_personal', subcat: 'nequi', party: 'Nequi' }),
-    R('TRANSFERENCIA DESDE NEQUI', { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi' }),
+    R('RECARGA DESDE BANCOLOMBIA', { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Bancolombia (cuenta propia)' }),
+    R('PAGO DE INTERESES', { type: 'ingreso', category: 'bancario', subcat: 'bancario', party: 'Nequi · rendimientos' }),
+    R('MAAS SAS', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Transporte público (MAAS)' }),
+    R('EDS TERPEL', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Gasolina · Terpel' }),
+    R('WORLD VISION', { type: 'egreso', category: 'gasto_personal', subcat: 'otros', party: 'World Vision (donación)' }),
     R('DEBITO POR ABONO CARTERA', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (cuota)' }),
     R('NU COMPANIA', { type: 'auto', category: 'transferencia', party: 'Cuenta Nu (propia)' }),
     R('COMPENSAR', { type: 'egreso', category: 'seguridad_social', party: 'Compensar (PILA)' }),
@@ -207,6 +234,12 @@ function defaultBankRules() {
     R('MAKE.COM', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Make', tool: true }),
     R('PAGO CREDITO', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito' }),
     R('DLO*DIDI', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Didi' }),
+    R('DIDI FOOD', { type: 'egreso', category: 'gasto_personal', subcat: 'restaurantes', party: 'DiDi Food' }),
+    R('DIDI', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Didi' }),
+    R('ADOBE', { type: 'egreso', category: 'gasto_personal', subcat: 'suscripciones', party: 'Adobe' }),
+    R('KREA', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Krea AI', tool: true }),
+    R('SENDINBLUE', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Brevo (Sendinblue)', tool: true }),
+    R('BREVO', { type: 'egreso', category: 'herramientas', subcat: 'suscripciones', party: 'Brevo', tool: true }),
     R('UBER', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Uber' }),
     R('CABIFY', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Cabify' }),
     R('INDRIVE', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'inDrive' }),
@@ -216,6 +249,7 @@ function defaultBankRules() {
     R('JUMBO', { type: 'egreso', category: 'gasto_personal', subcat: 'mercado', party: 'Jumbo' }),
     R('OLIMPICA', { type: 'egreso', category: 'gasto_personal', subcat: 'mercado', party: 'Olímpica' }),
     R('ARA ', { type: 'egreso', category: 'gasto_personal', subcat: 'mercado', party: 'Ara' }),
+    R('MOVISTAR', { type: 'egreso', category: 'gasto_personal', subcat: 'hogar', party: 'Movistar' }),
     R('RAPPI', { type: 'egreso', category: 'gasto_personal', subcat: 'restaurantes', party: 'Rappi' }),
     R('DOMICILIOS', { type: 'egreso', category: 'gasto_personal', subcat: 'restaurantes', party: 'Domicilios' }),
     R('SPOTIFY', { type: 'egreso', category: 'gasto_personal', subcat: 'suscripciones', party: 'Spotify' }),
@@ -247,6 +281,7 @@ const bankPartyFrom = (desc, prefix) => desc.slice(desc.toUpperCase().indexOf(pr
 const nameTokens = () => String((S.profile && S.profile.name) || '').toUpperCase().split(/\s+/).filter(x => x.length > 2);
 const normTxt = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 // Es una cuenta propia si aparece el primer nombre del perfil y al menos un apellido
+function looksLikeOwnerFirst(name) { const t = nameTokens(); return looksLikeOwner(name) || (t.length > 0 && normTxt(name).trim() === normTxt(t[0])); } // Bre-B solo muestra el nombre de pila
 function looksLikeOwner(name) { const t = nameTokens().map(x => normTxt(x)); if (t.length < 2) return false; const u = normTxt(name); return u.includes(t[0].slice(0, 5)) && t.slice(1).some(x => u.includes(x.slice(0, 5))); }
 const tokensOf = s => normTxt(s).split(/[^A-Z0-9]+/).filter(x => x.length >= 3);
 // ¿La descripción menciona a alguien del equipo / un cliente / una licencia? (todos los tokens del nombre presentes)
@@ -270,11 +305,17 @@ function matchAmount(mv) {
 }
 const matchClient = desc => matchByName(desc, (S.clients || []).concat((S.oneOffs || []).map(o => ({ name: o.client }))), c => c.name);
 const matchLicense = desc => matchByName(desc, S.licenses, l => l.name);
+// Cuentas Nequi propias registradas y su movimiento espejo (recarga/envío) para una fila de Bancolombia
+function nequiAccts() { const A = bankAccounts(); return Object.keys(A).filter(k => /nequi/i.test((A[k] && (A[k].bank || A[k].label)) || '')); }
+let nequiUsed = null; // durante una importación, cada recarga del Nequi propio explica una sola salida de Bancolombia (tres envíos iguales el mismo día no son tres recargas)
+function nequiTwin(mv) { const accts = nequiAccts(); if (!accts.length) return null; const want = mv.amount < 0 ? 'ingreso' : 'egreso'; const tw = (S.ledger || []).find(m => m.bankKey && accts.includes(m.bankAcct) && m.category === 'transferencia' && m.type === want && !(nequiUsed && nequiUsed.has(m.id)) && Math.abs((Number(m.net) || 0) - Math.abs(mv.amount)) < 1 && Math.abs(daysUntil(m.date) - daysUntil(mv.date)) <= 1) || null; if (tw && nequiUsed) nequiUsed.add(tw.id); return tw; }
 // Clasifica un movimiento: devuelve { type, category, subcat, party, review, ruleId }
+// El patrón de una regla debe empezar en inicio de palabra ("ARA " no pega en "PARA JUAN", pero "UBER" sí pega en "UBER RIDES")
+function ruleHits(D, match) { const M = String(match).toUpperCase(); let i = D.indexOf(M); while (i !== -1) { if (i === 0 || !/[A-Z0-9]/.test(D[i - 1])) return true; i = D.indexOf(M, i + 1); } return false; }
 function bankClassify(mv, side) {
   const D = mv.desc.toUpperCase(); const inc = mv.amount > 0;
   for (const r of bankRules()) {
-    if (!r.match || !D.includes(String(r.match).toUpperCase())) continue;
+    if (!r.match || !ruleHits(D, r.match)) continue;
     const type = r.type === 'auto' || !r.type ? (inc ? 'ingreso' : 'egreso') : r.type;
     if ((type === 'ingreso') !== inc && r.category !== 'transferencia') continue; // signo incompatible: seguir buscando
     let category = r.category, subcat = r.subcat || null;
@@ -292,10 +333,21 @@ function bankClassify(mv, side) {
   // transferencias sin nombre (Bancolombia "CTA SUC VIRTUAL") y envíos a terceros: por monto
   if (!inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) { const byAmt = matchAmount(mv); if (byAmt) return byAmt; return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: 'Transferencia a cuenta Bancolombia', review: true }; }
   if (inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Transferencia desde cuenta Bancolombia', review: true };
+  // Bancolombia ↔ Nequi: "TRANSFERENCIAS A NEQUI" no dice a quién. Es cuenta propia solo si el libro ya tiene la recarga equivalente del Nequi propio (mismo monto, ±1 día); si no, es plata enviada al Nequi de otra persona
+  if (!inc && /^TRANSFERENCIAS? A NEQUI$/i.test(mv.desc)) { if (nequiTwin(mv)) return { type: 'egreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi (cuenta propia)', review: false }; return { type: 'egreso', category: 'gasto_personal', subcat: 'otros', party: 'Envío al Nequi de otra persona', review: Math.abs(mv.amount) >= 100000 }; }
+  if (inc && /^TRANSFERENCIA DESDE NEQUI$/i.test(mv.desc)) { if (nequiTwin(mv)) return { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi (cuenta propia)', review: false }; return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Recibido desde el Nequi de otra persona', review: true }; }
   // descriptores estructurados
   let m;
+  if (normTxt(mv.desc) === normTxt((S.profile && S.profile.name) || '\u0000')) return { type: inc ? 'ingreso' : 'egreso', category: 'transferencia', subcat: 'nequi', party: 'Cuenta propia', review: false }; // Nequi: envío a tu propio Bancolombia
+  if ((m = /^De\s+(.+)$/i.exec(mv.desc)) && inc) { const own = looksLikeOwner(m[1]); const cl = matchClient(mv.desc); return { type: 'ingreso', category: own ? 'transferencia' : cl ? 'cliente' : 'otro_ingreso', subcat: null, party: own ? 'Cuenta propia' : cl ? cl.name : m[1].trim(), review: !own && !cl }; }
+  if ((m = /^Para\s+(.+)$/i.exec(mv.desc)) && !inc) { const own = looksLikeOwner(m[1]); const t = matchTeam(mv.desc); if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name, review: false, teamId: t.id }; return { type: 'egreso', category: own ? 'transferencia' : 'gasto_personal', subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
   if ((m = /^Recibiste de\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : (side === 'empresa' ? 'cliente' : 'otro_ingreso'), subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
   if ((m = /^Enviaste a\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
+  if ((m = /^RECIBI POR BRE-B DE:\s*(.+)$/i.exec(mv.desc)) && inc) { const own = looksLikeOwnerFirst(m[1]); const cl = matchClient(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : cl ? 'cliente' : 'otro_ingreso', subcat: own ? 'nequi' : null, party: own ? 'Cuenta propia (Bre-B)' : cl ? cl.name : m[1].trim(), review: !own && !cl }; }
+  if ((m = /^ENVIO CON BRE-B A:\s*(.+)$/i.exec(mv.desc)) && !inc) { const own = looksLikeOwnerFirst(m[1]); const t = matchTeam(m[1]); if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name, review: false, teamId: t.id }; return { type: 'egreso', category: own ? 'transferencia' : 'gasto_personal', subcat: own ? 'nequi' : 'otros', party: own ? 'Cuenta propia (Bre-B)' : m[1].trim(), review: !own }; }
+  if ((m = /^PAGO EN QR(?: BRE-B)?:?\s*(.+)$/i.exec(mv.desc)) && !inc) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: false };
+  if ((m = /^Pago recibido de\s+(.+)$/i.exec(mv.desc)) && inc) { const cl = matchClient(m[1]); return { type: 'ingreso', category: cl ? 'cliente' : 'otro_ingreso', subcat: null, party: cl ? cl.name : m[1].trim(), review: !cl }; }
+  if ((m = /^(?:REVERSO COMPRA EN|Dev)\s+(.+)$/i.exec(mv.desc)) && inc) return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Reverso de compra · ' + m[1].trim().split(/\s+/).slice(0, 2).join(' '), review: false };
   if ((m = /^Compra en\s+(.+?)(?:\s+con tarjeta.*)?$/i.exec(mv.desc))) return { type: 'egreso', category: 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: side === 'empresa' }; // desde la cuenta empresa: confirmá si fue gasto del negocio (proveedores)
   if ((m = /^PAGO INTERBANC\s+(.+)$/i.exec(mv.desc)) || (m = /^PAGO DE PROV\s+(.+)$/i.exec(mv.desc))) return { type: inc ? 'ingreso' : 'egreso', category: inc ? 'cliente' : 'proveedores', subcat: null, party: m[1].trim(), review: true };
   if ((m = /^TRANSF DE\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : 'otro_ingreso', subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
@@ -326,13 +378,14 @@ async function bankImportFile(file, opts = {}) {
     let lines; let password = opts.password || '';
     for (let attempt = 0; attempt < 3; attempt++) {
       try { lines = await readPdfLines(file, password); break; }
-      catch (e) { if (!e.needsPassword) throw e; const p = prompt((attempt ? 'Clave incorrecta. ' : '') + 'Este PDF tiene clave (Nu usa tu número de cédula):'); if (p == null) throw userErr('Importación cancelada'); password = p.trim(); bankLastPassword = password; }
+      catch (e) { if (!e.needsPassword) throw e; const p = prompt((attempt ? 'Clave incorrecta. ' : '') + 'Este PDF tiene clave (Nu y Nequi usan tu número de cédula):'); if (p == null) throw userErr('Importación cancelada'); password = p.trim(); bankLastPassword = password; }
     }
     if (!lines) throw userErr('No se pudo abrir el PDF');
     const fmt = bankDetectFormat(file, lines);
-    if (fmt !== 'nu-pdf') throw userErr('No reconozco este PDF. Por ahora se importan los extractos PDF de Nu y el XLSX de Bancolombia.');
-    parsed = parseNu(lines);
-  } else throw userErr('Formato no soportado: subí el XLSX de Bancolombia o el PDF de Nu.');
+    if (fmt === 'nu-pdf') parsed = parseNu(lines);
+    else if (fmt === 'nequi-pdf') parsed = parseNequi(lines);
+    else throw userErr('No reconozco este PDF. Por ahora se importan los extractos PDF de Nu y Nequi, y el XLSX de Bancolombia.');
+  } else throw userErr('Formato no soportado: subí el XLSX de Bancolombia o los PDF de Nu y Nequi.');
   const acc = bankAccounts()[parsed.acctLast4];
   const side = acc ? acc.side : 'personal';
   // conciliar el saldo solo si el extracto es reciente (un extracto viejo no representa el saldo de hoy)
@@ -343,6 +396,7 @@ async function bankImportFile(file, opts = {}) {
 function bankBuildRows() {
   const P = bankImp.parsed, side = bankImp.side;
   const existing = new Set((S.ledger || []).filter(m => m.bankKey).map(m => m.bankKey));
+  nequiUsed = new Set();
   bankImp.rows = P.movs.map((mv, i) => {
     const c = bankClassify(mv, side);
     const key = bankKeyOf(P.acctLast4, mv);
@@ -352,6 +406,7 @@ function bankBuildRows() {
     const tiny = c.category === 'bancario' && Math.abs(mv.amount) < 1000;
     return { i, mv, key, dup, twinId: twin ? twin.id : null, type: c.type, category: c.category, subcat: c.subcat, party: c.party, review: c.review, teamId: c.teamId || null, licenseId: c.licenseId || null, ccId: c.ccId || null, ccYm: c.ccYm || null, include: !dup && !(bankImp.skipTiny && tiny), tiny };
   });
+  nequiUsed = null;
 }
 function bankSummary() {
   const rows = bankImp.rows.filter(r => r.include);
@@ -360,13 +415,17 @@ function bankSummary() {
   return { n: rows.length, dup: bankImp.rows.filter(r => r.dup).length, twins: rows.filter(r => r.twinId).length, review: rows.filter(r => r.review).length, ing, egr, transfers: rows.filter(r => r.category === 'transferencia').length };
 }
 function bankCommit() {
-  const P = bankImp.parsed, side = bankImp.side; let added = 0, linked = 0, linkedPay = 0, linkedPila = 0;
+  const P = bankImp.parsed, side = bankImp.side; let added = 0, linked = 0, linkedPay = 0, linkedPila = 0, flipped = 0;
   bankImp.rows.filter(r => r.include).forEach(r => {
     const mv = r.mv; const isTransfer = r.category === 'transferencia';
     if (r.twinId) { const t = S.ledger.find(m => m.id === r.twinId); if (t) { t.bankKey = r.key; t.bankAcct = P.acctLast4; t.bankDesc = mv.desc; if (!t.subcat && r.subcat) t.subcat = r.subcat; linked++; return; } }
     const entry = { id: uid(), date: mv.date, type: mv.amount > 0 ? 'ingreso' : 'egreso', account: side, category: r.category, subcat: r.subcat || null, party: r.party || '', concept: mv.desc, gross: Math.abs(mv.amount), withholding: 0, net: Math.abs(mv.amount), status: 'hecho', applied: true, balanceBy: 'banco', source: 'banco', bankKey: r.key, bankAcct: P.acctLast4, notes: r.review && !isTransfer ? 'Clasificación automática: revisar' : '' };
     if (mv.ref) entry.bankRef = mv.ref;
     const ym = ymOf(mv.date), amt = Math.abs(mv.amount);
+    if (/nequi/i.test(P.bank) && isTransfer) { // la recarga desde Bancolombia ya importada como "envío a un tercero" era en realidad a esta cuenta
+      const tw = (S.ledger || []).find(m => m.bankKey && m.bankAcct !== P.acctLast4 && /NEQUI/i.test(m.concept || '') && m.category !== 'transferencia' && m.type !== entry.type && Math.abs((Number(m.net) || 0) - amt) < 1 && Math.abs(daysUntil(m.date) - daysUntil(mv.date)) <= 1);
+      if (tw) { tw.category = 'transferencia'; tw.subcat = 'nequi'; tw.party = 'Nequi (cuenta propia)'; tw.notes = ''; flipped++; }
+    }
     // cruces automáticos: el pago del banco marca Pagos del mes, la cuenta de cobro y la planilla
     if (r.teamId && r.category === 'nomina' && !r.review) {
       const ymPay = r.ccYm || ym; const key = 'team:' + r.teamId; entry.refKey = ymPay + '|' + key;
@@ -399,7 +458,7 @@ function bankCommit() {
   if (bankImp.setBalance && a.main && a.reconciledTo === P.period.to && P.summary) {
     if (side === 'personal') S.liquidity.ahorrosPersonalesHoy = P.summary.final; else S.liquidity.cajaEmpresaHoy = P.summary.final;
   }
-  const res = { added, linked, linkedPay, linkedPila, period: P.period, side, bank: P.bank };
+  const res = { added, linked, linkedPay, linkedPila, flipped, period: P.period, side, bank: P.bank };
   bankImp = null;
   return res;
 }
@@ -479,7 +538,7 @@ function bankPanelClick(act, p) {
     case 'bk:ok': { const r = bankImp.rows[+p[0]]; if (r) r.review = false; re(); return true; }
     case 'bk:commit': {
       const res = bankCommit();
-      toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}`, 'ok');
+      toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}${res.flipped ? ` · ${res.flipped} envíos de Bancolombia reconocidos como recargas propias` : ''}`, 'ok');
       mvYear = res.period.to.slice(0, 4); mvAcc = res.side; re();
       if (bankQueue.length) bankNext();
       return true; }
