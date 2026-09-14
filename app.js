@@ -1805,6 +1805,7 @@ function showMfaStage() {
   $('#emailField').hidden = true; $('#keyField').hidden = true; $('#mfaField').hidden = false;
   const gb = $('#googleBtn'), go_ = $('#lockOr'), gh = $('#googleHint'); if (gb) gb.hidden = true; if (go_) go_.hidden = true; if (gh) gh.hidden = true;
   $('#lockSub').textContent = 'Segundo paso: el código de tu app de autenticación';
+  $('#lockMode').textContent = 'Abrí tu app de autenticación y escribí el código de 6 dígitos vigente. Si perdiste la app, el factor se quita desde Supabase → Authentication → Users.';
   const btn = $('#lockBtn'); btn.textContent = 'Verificar'; btn.disabled = false;
   $('#lockCode').value = ''; $('#lockCode').focus();
 }
@@ -1817,6 +1818,7 @@ async function bootLock() {
   const cloudReady = await initSupabase();
   const lockSub = $('#lockSub'), keyLabel = $('#keyLabel'), emailField = $('#emailField'), lockMode = $('#lockMode');
   const hasLocalKey = !!localKeyHash();
+  bindLockForm(cloudReady); // SIEMPRE antes de resolver una sesión existente: el segundo paso (MFA) usa este mismo formulario
 
   if (cloudReady) {
     emailField.hidden = false;
@@ -1841,6 +1843,8 @@ async function bootLock() {
     }
   }
 
+}
+function bindLockForm(cloudReady) {
   $('#lockForm').addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = $('#lockErr'); err.textContent = '';
