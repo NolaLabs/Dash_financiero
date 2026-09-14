@@ -679,6 +679,17 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .empty { text-align: center; padding: 28px 16px; color: var(--verde-60); font-size: 13px; }
 .empty b { display: block; font-family: var(--font-display); font-size: 22px; color: var(--cyprus); margin-bottom: 4px; }
 
+/* Importador de extractos */
+.bk-table td { padding: 6px 8px; font-size: 12.5px; }
+.bk-table select, .bk-table input[type=text] { padding: 6px 8px; font-size: 12px; min-width: 120px; }
+.bk-table input[type=checkbox] { width: 16px; height: 16px; }
+.bk-row.off td { opacity: .45; }
+.bk-row.dup td { opacity: .5; font-style: italic; }
+.bk-row.rev td { background: var(--jade-14); }
+.bk-table .party { font-weight: 600; color: var(--verde); }
+.bk-table .concept { display: block; font-size: 11px; color: var(--verde-60); font-weight: 400; }
+.subcat { font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; color: var(--verde-60); margin-left: 6px; }
+
 /* ============================================================== MOTION (reveal) */
 /* Aparición escalonada al navegar: keyframes (no depende de JS después del render) */
 .js-motion .reveal { animation: revealIn .55s var(--ease) both; animation-delay: var(--d, 0ms); }

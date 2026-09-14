@@ -131,6 +131,7 @@ function defaultState() {
     ledger: [], docs: [], cuentasCobro: [], pila: [],
     renta: { years: {} },
     alerts: { rules: [], dismissed: {} },
+    bank: { accounts: {}, rules: [] },
   };
 }
 
@@ -512,10 +513,10 @@ function renderResumen() {
   const nAlerts = (typeof activeAlerts === 'function') ? activeAlerts().length : 0;
   el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: cuánta plata hay en cada cuenta, cómo se mueve mes a mes, y los números que mueven tus decisiones. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.', {
     label: 'Cuenta empresa · saldo hoy', value: d.cajaEmpresa, fmt: 'cop', cls: d.cajaEmpresa < 0 ? 'neg' : '',
-    sub: `Reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses de operación · flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes`,
+    sub: `Reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses de operación · flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes${(() => { const accs = (s.bank && s.bank.accounts) || {}; const k = Object.keys(accs).filter(a => accs[a].side === 'empresa' && accs[a].reconciledTo).sort((a, b) => accs[b].reconciledTo.localeCompare(accs[a].reconciledTo))[0]; return k ? ' · conciliado con el banco al ' + fmtDate(accs[k].reconciledTo) : ' · saldo sin conciliar con el banco'; })()}`,
     chips: empChip + ' ' + selfChip,
     side: [
-      { label: 'Cuenta personal · hoy', value: d.ahorros, fmt: 'short', cls: d.ahorros < 0 ? 'neg' : '', sub: d.deficit > 0 ? `déficit ${fmtShort(d.deficit)}/mes · ${d.ahorros > 0 ? 'runway ' + fmtMonths(d.runwayMonths) : 'sin ahorros que lo cubran'}` : 'sin déficit mensual' },
+      { label: 'Cuenta personal · hoy', value: d.ahorros, fmt: 'short', cls: d.ahorros < 0 ? 'neg' : '', sub: (() => { const accs = (s.bank && s.bank.accounts) || {}; const k = Object.keys(accs).filter(a => accs[a].side === 'personal' && accs[a].reconciledTo).sort((a, b) => accs[b].reconciledTo.localeCompare(accs[a].reconciledTo))[0]; const rec = k ? 'extracto al ' + fmtDate(accs[k].reconciledTo) + ': ' + fmtShort(accs[k].balance) + ' · ' : ''; return rec + (d.deficit > 0 ? `déficit ${fmtShort(d.deficit)}/mes` : 'sin déficit mensual'); })() },
       { label: `Resultado real · ${ymLabel(ymNow)}`, value: realMes, fmt: 'short', cls: realMes >= 0 ? 'pos' : 'neg', sub: lg ? `ingresos ${fmtShort(lg.cur.empresa.ing)} · egresos ${fmtShort(lg.cur.empresa.egr)}` : '' },
       { label: 'Por cobrar', value: lg ? lg.pendingIn : 0, fmt: 'short', sub: lg && lg.pendingInN ? `${lg.pendingInN} pendiente${lg.pendingInN > 1 ? 's' : ''}` : 'nada pendiente' },
       { label: 'Alertas activas', value: nAlerts, fmt: 'int', cls: nAlerts ? 'neg' : 'pos', sub: nAlerts ? 'revisalas abajo' : 'todo en orden' },

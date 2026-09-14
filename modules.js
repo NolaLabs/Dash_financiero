@@ -170,6 +170,7 @@ async function onDocFileChosen(ev) {
 /* ========================================================= LIBRO DE MOVIMIENTOS */
 const LEDGER_CATS = {
   cliente:          { label: 'Cobro a cliente',      type: 'ingreso' },
+  salario_empleo:   { label: 'Salario (empleo)',     type: 'ingreso' },
   otro_ingreso:     { label: 'Otro ingreso',         type: 'ingreso' },
   capital:          { label: 'Aporte / capital',     type: 'ingreso' },
   nomina:           { label: 'Nómina / contratistas', type: 'egreso' },
@@ -179,6 +180,9 @@ const LEDGER_CATS = {
   proveedores:      { label: 'Proveedores',          type: 'egreso' },
   salario_ceo:      { label: 'Salario CEO (empresa → personal)', type: 'egreso' },
   gasto_personal:   { label: 'Gasto personal',       type: 'egreso' },
+  deuda:            { label: 'Deuda (cuotas y tarjetas)', type: 'egreso' },
+  bancario:         { label: 'Bancario (comisiones, intereses)', type: 'auto' },
+  transferencia:    { label: 'Transferencia entre mis cuentas', type: 'auto' },
   otro_egreso:      { label: 'Otro egreso',          type: 'egreso' },
 };
 const catLabel = k => (LEDGER_CATS[k] || { label: k || '—' }).label;
@@ -189,6 +193,7 @@ function ledgerNormalize(m) {
   m.type = m.type === 'ingreso' ? 'ingreso' : 'egreso';
   m.account = m.account === 'personal' ? 'personal' : 'empresa';
   if (!LEDGER_CATS[m.category]) m.category = m.type === 'ingreso' ? 'cliente' : 'otro_egreso';
+  if (m.subcat === undefined) m.subcat = null;
   m.gross = Number(m.gross) || 0; m.withholding = Number(m.withholding) || 0;
   const n = Number(m.net); m.net = (m.net === '' || m.net == null || !isFinite(n)) ? m.gross - m.withholding : n;
   m.status = m.status === 'pendiente' ? 'pendiente' : 'hecho';
@@ -199,7 +204,7 @@ function ledgerNormalize(m) {
 }
 // Efecto sobre los saldos (solo para movimientos que administran su propio saldo)
 function ledgerEffect(m, sign) {
-  if (m.balanceBy === 'pagos') return;
+  if (m.balanceBy === 'pagos' || m.balanceBy === 'banco') return;
   const L = S.liquidity; L.cajaEmpresaHoy = Number(L.cajaEmpresaHoy) || 0; L.ahorrosPersonalesHoy = Number(L.ahorrosPersonalesHoy) || 0;
   const amt = (Number(m.net) || 0) * sign;
   if (m.category === 'salario_ceo') { L.cajaEmpresaHoy -= amt; L.ahorrosPersonalesHoy += amt; return; }
@@ -253,6 +258,7 @@ function ledgerStats(s) {
   let pendingIn = 0, pendingInN = 0, oldestPending = 0, pendingOut = 0;
   L.forEach(m => {
     const net = Number(m.net) || 0, ym = ymOf(m.date);
+    if (m.category === 'transferencia') return; // movimiento entre tus cuentas: ni ingreso ni gasto
     if (m.status === 'pendiente') {
       if (m.type === 'ingreso') { pendingIn += net; pendingInN++; oldestPending = Math.max(oldestPending, daysSince(m.date)); } else pendingOut += net;
       return;
@@ -570,7 +576,15 @@ let mvAcc = 'empresa', mvYear = String(new Date().getFullYear()), mvType = 'todo
 let mvDraft = null;
 function mvNewDraft() { return { date: localISO(), type: 'ingreso', account: 'empresa', category: 'cliente', party: '', concept: '', gross: '', withholding: '', net: '', status: 'hecho', notes: '' }; }
 const ACC_LABEL = { empresa: 'Cuenta empresa', personal: 'Cuenta personal', todas: 'Ambas cuentas' };
-function mvCatOptions(type, sel) { return Object.keys(LEDGER_CATS).filter(k => LEDGER_CATS[k].type === type).map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(LEDGER_CATS[k].label)}</option>`).join(''); }
+function mvCatOptions(type, sel) { return Object.keys(LEDGER_CATS).filter(k => LEDGER_CATS[k].type === type || LEDGER_CATS[k].type === 'auto').map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(LEDGER_CATS[k].label)}</option>`).join(''); }
+function personalSpendBySubcat(year, acc) {
+  const out = {};
+  (S.ledger || []).filter(m => m.status === 'hecho' && m.type === 'egreso' && (acc === 'todas' || m.account === acc) && (m.date || '').slice(0, 4) === String(year) && ['gasto_personal', 'deuda', 'bancario'].includes(m.category)).forEach(m => {
+    const k = m.category === 'deuda' ? 'deuda' : m.category === 'bancario' ? 'bancario' : (m.subcat || 'otros');
+    out[k] = (out[k] || 0) + (Number(m.net) || 0);
+  });
+  return out;
+}
 function renderMovimientos() {
   const s = S, d = D, el = $('#view-movimientos');
   const st = d.ledger || ledgerStats(s);
@@ -602,10 +616,11 @@ function renderMovimientos() {
       <select data-act="mv:year">${years.map(yy => `<option value="${yy}" ${yy === mvYear ? 'selected' : ''}>${yy}</option>`).join('')}</select>
       <div class="seg">${[['todos', 'Todos'], ['ingreso', 'Ingresos'], ['egreso', 'Egresos'], ['pendientes', 'Pendientes']].map(([k, l]) => `<button class="${mvType === k ? 'on' : ''}" data-act="mv:type" data-p="${k}">${l}</button>`).join('')}</div>
     </div>
-    <div class="right"><button class="btn btn--signature" data-act="mv:form">${ico('plus')} Registrar movimiento</button></div>
+    <div class="right"><button class="btn btn--ghost" data-act="bk:pick" title="Subí el extracto XLSX del banco: se clasifica solo y concilia el saldo">${ico('download')} Importar extracto</button><button class="btn btn--signature" data-act="mv:form">${ico('plus')} Registrar movimiento</button></div>
   </div>
 
-  ${mvFormOpen ? mvFormHTML() : ''}
+  ${typeof bankPanelHTML === 'function' ? bankPanelHTML() : ''}
+  ${mvFormOpen && !bankImp ? mvFormHTML() : ''}
 
   <div class="grid g-12">
     <div class="card pad-lg">
@@ -627,6 +642,10 @@ function renderMovimientos() {
     </div>
   </div>
 
+  ${(() => { const sp = personalSpendBySubcat(mvYear, mvAcc); const keys = Object.keys(sp).sort((a, b) => sp[b] - sp[a]); if (!keys.length) return ''; const tot = sum(Object.values(sp)); const SC = (typeof BANK_SUBCATS !== 'undefined') ? BANK_SUBCATS : {}; return `<div class="card mt-16"><div class="card-h"><h3>¿En qué se va la plata? · ${mvYear} (real, del extracto)</h3><span class="eyebrow">${fmtShort(tot)} en gastos personales y deuda</span></div>
+    <div class="grid g-12"><div id="chart-spend"></div><div><table class="tbl"><thead><tr><th>Detalle</th><th class="r">Total</th><th class="r">%</th></tr></thead><tbody>${keys.map(k => `<tr><td>${esc(SC[k] || k)}</td><td class="r tabnum">${fmtCOP(sp[k])}</td><td class="r tabnum">${fmtPct(sp[k] / tot)}</td></tr>`).join('')}</tbody></table></div></div></div>`; })()}
+  ${typeof bankRulesHTML === 'function' ? bankRulesHTML() : ''}
+
   <div class="card mt-16">
     <div class="card-h"><h3>${rows.length} movimiento${rows.length === 1 ? '' : 's'} · ${mvYear}</h3>
       <div class="flex gap-8 wrap">${Object.keys(ledgerGross2026).length ? `<button class="btn btn--ghost btn--sm" data-act="mv:sync-billing" title="Copia los ingresos brutos de la empresa por mes a 'Facturación 2026 real' de Datos · Editar">Actualizar facturación 2026 con el libro</button>` : ''}
@@ -636,6 +655,8 @@ function renderMovimientos() {
       : `<div class="empty"><b>Sin movimientos ${mvType !== 'todos' ? 'con ese filtro ' : ''}en ${mvYear}</b>Registrá el primero con el botón de arriba. Los pagos que marcás en <b>Pagos del mes</b> y las planillas de <b>Seguridad social</b> también aparecen acá solos.</div>`}
   </div>`;
 
+  const spEl = $('#chart-spend');
+  if (spEl) { const sp = personalSpendBySubcat(mvYear, mvAcc); const SC = (typeof BANK_SUBCATS !== 'undefined') ? BANK_SUBCATS : {}; const pal = ['#004643', '#2D7D6F', '#7ED3B2', '#B85C38', '#C88166', '#A9E2CB', '#0A3625', '#DCEFE7', '#CB6E4A', '#6B7280', '#9CA3AF', '#D1D5DB', '#4B5563', '#E5E7EB']; const keys = Object.keys(sp).sort((a, b) => sp[b] - sp[a]); donut(spEl, { segments: keys.map((k, i) => ({ label: SC[k] || k, value: sp[k], color: pal[i % pal.length] })), centerTop: fmtShort(sum(Object.values(sp))), centerBot: mvYear }); }
   const ser = st.series[acc];
   comboChart($('#chart-mv'), { labels: st.labels, bars: [{ name: 'Ingresos', color: '#2D7D6F', data: ser.map(x => x.ing) }, { name: 'Egresos', color: '#B85C38', data: ser.map(x => x.egr) }], line: { name: 'Resultado', color: '#004643', data: ser.map(x => x.ing - x.egr) }, h: 280 });
 }
@@ -643,13 +664,14 @@ function mvRowHTML(m) {
   const inc = m.type === 'ingreso';
   const open = mvOpenId === m.id;
   const chip = m.status === 'pendiente' ? `<span class="chip chip--info click" data-act="mv:status" data-p="${m.id}|hecho" title="Marcar como ${inc ? 'recibido' : 'pagado'}"><span class="cdot"></span>Pendiente</span>` : `<span class="chip chip--ok click" data-act="mv:status" data-p="${m.id}|pendiente" title="Volver a pendiente"><span class="cdot"></span>${inc ? 'Recibido' : 'Pagado'}</span>`;
-  const src = m.source === 'pago' ? 'Pagos del mes' : m.source === 'pila' ? 'Seguridad social' : m.source === 'equipo' ? 'Equipo' : 'manual';
+  const src = m.source === 'pago' ? 'Pagos del mes' : m.source === 'pila' ? 'Seguridad social' : m.source === 'equipo' ? 'Equipo' : m.source === 'banco' ? 'Extracto del banco' + (m.bankAcct ? ' ···' + m.bankAcct : '') : 'manual';
+  const SCn = (typeof BANK_SUBCATS !== 'undefined' && m.subcat && BANK_SUBCATS[m.subcat]) ? `<span class="subcat">${esc(BANK_SUBCATS[m.subcat])}</span>` : '';
   const main = `<tr class="mv-row exp ${m.status === 'pendiente' ? 'pend' : ''}" data-act="mv:open" data-p="${m.id}">
     <td class="nowrap">${fmtDate(m.date)}</td>
     <td><span class="party">${esc(m.party || catLabel(m.category))}</span><span class="concept">${esc(m.concept || '')}${m.withholding ? ` · bruto ${fmtShort(m.gross)} − ret. ${fmtShort(m.withholding)}` : ''}</span></td>
-    <td><span class="cat">${esc(catLabel(m.category))}</span></td>
+    <td><span class="cat">${esc(catLabel(m.category))}</span>${SCn}</td>
     <td>${m.account === 'personal' ? 'Personal' : 'Empresa'}</td>
-    <td class="r amt"><span class="${inc ? 'in' : 'out'}">${inc ? '+' : '−'}${fmtCOP(Math.abs(m.net))}</span></td>
+    <td class="r amt"><span class="${m.category === 'transferencia' ? '' : inc ? 'in' : 'out'}">${inc ? '+' : '−'}${fmtCOP(Math.abs(m.net))}</span></td>
     <td>${chip}</td>
     <td class="nowrap">${m.docId ? `<button class="iconbtn soft" data-act="doc:open" data-p="${m.docId}" title="Ver comprobante">${ico('paperclip')}</button>` : ''}<button class="iconbtn" data-act="mv:del" data-p="${m.id}" title="Eliminar">${ico('trash')}</button></td></tr>`;
   if (!open) return main;
@@ -981,6 +1003,7 @@ function ruleNew(type) {
 function modClick(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act, p = (b.dataset.p || '').split('|');
+  if (act.indexOf('bk:') === 0 && typeof bankPanelClick === 'function') { e.preventDefault(); bankPanelClick(act, p); return; }
   const tgt = b.dataset.target ? JSON.parse(b.dataset.target) : null;
   // los inputs de tipo checkbox con data-act se manejan en change
   if (b.tagName === 'INPUT' && b.type === 'checkbox') return;
@@ -1037,6 +1060,7 @@ function modClick(e) {
 }
 function modChange(e) {
   const t = e.target;
+  if ((t.dataset.bk || t.dataset.bkopt) && typeof bankPanelChange === 'function') { bankPanelChange(t); return; }
   if (t.dataset.act === 'rule:toggle') { const r = S.alerts.rules.find(x => x.id === t.dataset.p); if (r) { r.active = t.checked; re(); } return; }
   if (t.dataset.act === 'mv:year') { mvYear = t.value; re(); return; }
   if (t.dataset.act === 'pila:year') { pilaYear = t.value; pilaOpen = null; re(); return; }
@@ -1055,6 +1079,7 @@ function modChange(e) {
 }
 function modInput(e) {
   const t = e.target;
+  if (t.dataset.bk && t.type === 'text' && typeof bankPanelChange === 'function') { bankPanelChange(t); return; }
   if (t.dataset.mvd) { mvInput(t); return; }
   if (t.dataset.mvf && t.type !== 'date') { mvFieldInput(t); return; }
   if (t.dataset.ccf && t.type !== 'date') { ccInput(t); return; }
@@ -1111,6 +1136,10 @@ function migrateModules(st) {
       st.ledger.push({ id: uid(), date, type: 'egreso', account: side, category: cat, party, concept, gross: amt, withholding: 0, net: amt, status: 'hecho', applied: false, balanceBy: 'pagos', source: 'pago', refKey, notes: '' });
     });
   });
+  // banco: cuentas conciliadas y reglas propias
+  if (!st.bank || typeof st.bank !== 'object' || Array.isArray(st.bank)) st.bank = { accounts: {}, rules: [] };
+  if (!st.bank.accounts || typeof st.bank.accounts !== 'object') st.bank.accounts = {};
+  if (!Array.isArray(st.bank.rules)) st.bank.rules = [];
   // renta: abrir el año en curso si no existe ninguno
   if (!Object.keys(st.renta.years).length) st.renta.years[String(new Date().getFullYear())] = rentaDefaults();
   Object.keys(st.renta.years).forEach(y => { const ry = st.renta.years[y]; if (!Array.isArray(ry.docs)) ry.docs = []; RENTA_DOCS.forEach(d => { if (!ry.docs.some(x => x.key === d.key)) ry.docs.push({ key: d.key, status: 'pendiente', docId: null, note: '' }); }); if (!ry.figures) ry.figures = {}; });
