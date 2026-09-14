@@ -90,8 +90,10 @@ update storage.buckets
 alter table public.tableros drop constraint if exists tableros_data_size;
 alter table public.tableros add  constraint tableros_data_size check (pg_column_size(data) < 2000000);
 create or replace function public.set_updated_at()
-returns trigger language plpgsql security definer set search_path = public as $$
+returns trigger language plpgsql security invoker set search_path = public as $$
 begin new.updated_at := now(); return new; end $$;
+revoke all on function public.set_updated_at() from public, anon;
+grant execute on function public.set_updated_at() to authenticated, service_role;
 drop trigger if exists tableros_set_updated_at on public.tableros;
 create trigger tableros_set_updated_at before insert or update on public.tableros
   for each row execute function public.set_updated_at();
@@ -104,8 +106,8 @@ returns boolean language sql stable security definer set search_path = auth, pub
     or not exists (select 1 from auth.mfa_factors f where f.user_id = auth.uid() and f.status = 'verified'),
     false);
 $$;
-revoke all on function public.mfa_ok() from public;
-grant execute on function public.mfa_ok() to authenticated;
+revoke all on function public.mfa_ok() from public, anon;
+grant execute on function public.mfa_ok() to authenticated;   -- las políticas RLS lo evalúan con este rol
 
 drop policy if exists "leer propio tablero"   on public.tableros;
 drop policy if exists "crear propio tablero"  on public.tableros;
@@ -130,8 +132,10 @@ create policy "documentos: borrar propios" on storage.objects for delete to auth
 -- Registro cerrado a nivel de base (además del switch del dashboard).
 -- Para dar de alta un usuario nuevo: drop trigger block_signups on auth.users; crear el usuario; volver a crear el trigger.
 create or replace function public.block_signups()
-returns trigger language plpgsql security definer as $$
+returns trigger language plpgsql security invoker set search_path = public as $$
 begin raise exception 'Registro cerrado: este tablero es de un solo usuario.' using errcode = 'P0001'; end $$;
+revoke all on function public.block_signups() from public, anon, authenticated;
+grant execute on function public.block_signups() to supabase_auth_admin, service_role;
 drop trigger if exists block_signups on auth.users;
 create trigger block_signups before insert on auth.users
   for each row execute function public.block_signups();
