@@ -1178,7 +1178,11 @@ function migrateModules(st) {
   st.ledger.forEach(m => {
     if (m.source !== 'pago' || m.subcat || !m.refKey) return;
     const key = m.refKey.split('|')[1] || '';
-    if (key.indexOf('exp:') === 0) { const x = st.personalExpenses.find(q => q.id === key.slice(4)); if (x) { m.subcat = x.subcat || null; if (x.category === 'deuda') m.category = 'deuda'; } }
+    if (key.indexOf('exp:') === 0) {
+      const x = st.personalExpenses.find(q => q.id === key.slice(4));
+      if (x) { m.subcat = x.subcat || null; if (x.category === 'deuda') m.category = 'deuda'; }
+      else { const c = String(m.concept || '').toLowerCase(); m.subcat = /transporte|didi|uber/.test(c) ? 'transporte' : /salida|domicil|restaur/.test(c) ? 'restaurantes' : /mercado/.test(c) ? 'mercado' : /arriendo|plan de datos|servicio/.test(c) ? 'hogar' : /tarjeta|cr[eé]dito|icetex/.test(c) ? 'deuda' : /spotify|netflix|suscrip|tradingview/.test(c) ? 'suscripciones' : 'otros'; }
+    }
     else if (key.indexOf('lic:') === 0) m.subcat = 'suscripciones';
   });
   // renta: abrir el año en curso si no existe ninguno
