@@ -5,10 +5,11 @@
 'use strict';
 
 /* --------------------------------------------------------- constantes */
-const ACCESS_KEY = '[redactado]';
 const LS_STATE = 'nola_tablero_state_v1';
 const LS_CLOUD = 'nola_tablero_cloud_cfg';
-const SUPABASE_CDN = 'https://esm.sh/@supabase/supabase-js@2';
+const LS_LOCAL_KEY = 'nola_tablero_local_key';   // hash SHA-256 de la clave del modo local (se crea la primera vez, nunca vive en el código)
+const CAPTCHA_SITE_KEY = '';                      // opcional: site key de Cloudflare Turnstile (Supabase → Auth → Attack protection). Vacío = sin CAPTCHA
+const MIN_PASSWORD = 12;
 
 // Proyección arranca en jun-26 (mes 1) … may-27 (mes 12) — igual que la hoja "Flujo 12m"
 const MONTHS12 = ['jun-26','jul-26','ago-26','sep-26','oct-26','nov-26','dic-26','ene-27','feb-27','mar-27','abr-27','may-27'];
@@ -483,7 +484,7 @@ function head(num, title, lead, fig) {
   let figHTML = '';
   if (fig) {
     const side = (fig.side || []).map(x => `<div class="hf-side"><span class="hf-label">${esc(x.label)}</span><span class="hf-num ${x.cls || ''}" data-count="${Number(x.value) || 0}" data-fmt="${x.fmt || 'short'}">${fmtOf(Number(x.value) || 0, x.fmt || 'short')}</span>${x.sub ? `<span class="hf-sub">${esc(x.sub)}</span>` : ''}</div>`).join('');
-    figHTML = `<div class="hero-fig"><div class="hf-main"><span class="hf-label">${esc(fig.label)}</span><span class="hf-value ${fig.cls || ''}" data-count="${Number(fig.value) || 0}" data-fmt="${fig.fmt || 'cop'}">${fmtOf(Number(fig.value) || 0, fig.fmt || 'cop')}</span>${fig.sub ? `<span class="hf-sub">${fig.sub}</span>` : ''}${fig.chips ? `<div class="hf-chips">${fig.chips}</div>` : ''}</div>${side}</div>`;
+    figHTML = `<div class="hero-fig"><div class="hf-main"><span class="hf-label">${esc(fig.label)}</span><span class="hf-value ${fig.cls || ''}" data-count="${Number(fig.value) || 0}" data-fmt="${fig.fmt || 'cop'}">${fmtOf(Number(fig.value) || 0, fig.fmt || 'cop')}</span>${fig.sub ? `<span class="hf-sub">${esc(fig.sub)}</span>` : ''}${fig.chips ? `<div class="hf-chips">${fig.chips}</div>` : ''}</div>${side}</div>`;
   }
   return `<header class="hero">
   <span class="eyebrow"><span class="num">${num}</span> · Nola Labs•</span>
@@ -1209,24 +1210,112 @@ function renderAjustes() {
     </div>
   </div>
 
-  <div class="card mt-16"><div class="card-h"><h3>Conexión a la nube (Supabase)</h3><span class="eyebrow">Login real · ${ACCESS_KEY ? 'clave [redactado]' : ''}</span></div>
-    <p class="card-note mb-16">Pegá la URL y la <i>anon key</i> de tu proyecto Supabase (gratis). Con esto, el tablero usa login real con tu correo y la clave <b>[redactado]</b>, y sincroniza en vivo. La guía paso a paso está en <b>README.md</b> y el SQL en <b>supabase-setup.sql</b>.</p>
+  ${connected ? `<div class="card mt-16" id="secCard"><div class="card-h"><h3>Seguridad de tu cuenta</h3><span class="eyebrow">Contraseña · Dos pasos</span></div>
+    <div class="grid g-2">
+      <div>
+        <div class="eyebrow mb-8">Cambiar contraseña</div>
+        <div class="field"><label>Contraseña nueva (mínimo ${MIN_PASSWORD} caracteres)</label><input class="input" type="password" id="pw1" autocomplete="new-password"></div>
+        <div class="field"><label>Repetila</label><input class="input" type="password" id="pw2" autocomplete="new-password"></div>
+        <button class="btn btn--primary btn--sm" id="pwSave">Cambiar contraseña</button>
+        <p class="hint">Usá una frase larga y única. La contraseña anterior deja de servir en todos tus dispositivos.</p>
+      </div>
+      <div id="mfaBox"><div class="eyebrow mb-8">Verificación en dos pasos</div><p class="hint">Consultando…</p></div>
+    </div>
+  </div>` : ''}
+
+  <div class="card mt-16"><div class="card-h"><h3>Conexión a la nube (Supabase)</h3><span class="eyebrow">Login real</span></div>
+    <p class="card-note mb-16">La conexión viene configurada. Si algún día cambiás de proyecto, pegá acá la URL y la <i>publishable key</i> (la clave pública del proyecto; la seguridad la dan el login y las políticas RLS).</p>
     <div class="grid g-2">
       <div class="field"><label>Project URL</label><input class="input" type="text" id="cfgUrl" placeholder="https://xxxx.supabase.co" value="${esc(cfg.url || '')}"></div>
-      <div class="field"><label>Anon public key</label><input class="input" type="text" id="cfgKey" placeholder="eyJhbGci..." value="${esc(cfg.anonKey || '')}"></div>
+      <div class="field"><label>Publishable key</label><input class="input" type="text" id="cfgKey" placeholder="sb_publishable_…" value="${esc(cfg.anonKey || '')}"></div>
     </div>
     <div class="flex gap-12 wrap mt-8">
       <button class="btn btn--primary" id="cfgSave">Guardar conexión</button>
       ${cfg.url ? `<button class="btn btn--danger" id="cfgClear">Quitar conexión</button>` : ''}
     </div>
-    <div class="warnbox mt-16">La <i>anon key</i> es pública por diseño: la seguridad real la da el RLS de Supabase (cada usuario solo ve su fila). Nunca pegues aquí la <i>service_role key</i>.</div>
+    <div class="warnbox mt-16">La <i>publishable key</i> es pública por diseño: la seguridad real la da el RLS de Supabase (cada usuario solo ve su fila) y, si la activás, la verificación en dos pasos. Nunca pegues aquí la <i>service_role key</i>.</div>
   </div>
 
-  <div class="card mt-16"><div class="card-h"><h3>Seguridad de la clave</h3></div>
-    <p class="card-note">En modo <b>local</b>, <b>[redactado]</b> es un candado que evita miradas casuales, pero no es seguridad real (alguien técnico con el archivo podría saltarlo). En modo <b>nube</b>, <b>[redactado]</b> es tu contraseña de login real y tus datos quedan protegidos por autenticación. Para datos financieros reales en la nube, usá el modo nube.</p>
+  <div class="card mt-16"><div class="card-h"><h3>Modo local</h3></div>
+    <p class="card-note">Sin nube, la clave local es un candado contra miradas casuales, no seguridad real: los datos quedan en este navegador. Para datos financieros reales usá el modo nube con tu cuenta${connected ? '' : ' (login real, dos pasos y archivos en tu bucket privado)'}.</p>
+    ${connected ? '' : `<div class="flex gap-12 wrap mt-16"><button class="btn btn--ghost btn--sm" id="localKeyChange">Cambiar la clave local</button></div>`}
   </div>`;
   bindAjustes();
+  if (connected) mfaRenderStatus();
 }
+
+/* ----- Seguridad de la cuenta: contraseña y verificación en dos pasos (TOTP) ----- */
+async function mfaStatus() {
+  const { data, error } = await cloud.client.auth.mfa.listFactors();
+  if (error) throw error;
+  const totp = (data && data.totp) || [];
+  return { verified: totp.filter(f => f.status === 'verified'), pending: totp.filter(f => f.status !== 'verified') };
+}
+async function mfaRenderStatus() {
+  const box = $('#mfaBox'); if (!box) return;
+  try {
+    const st = await mfaStatus();
+    if (st.verified.length) {
+      box.innerHTML = `<div class="eyebrow mb-8">Verificación en dos pasos</div><span class="chip chip--ok"><span class="cdot"></span>Activada</span>
+        <p class="hint">Al entrar, además de la contraseña (o Google) se pide el código de tu app de autenticación. Sin ese código, la nube no entrega tus datos.</p>
+        <button class="btn btn--danger btn--sm mt-8" id="mfaOff">Desactivar</button>`;
+      const off = $('#mfaOff'); if (off) off.addEventListener('click', async () => {
+        if (!confirm('¿Desactivar la verificación en dos pasos? Tu cuenta queda protegida solo por la contraseña.')) return;
+        try { for (const f of st.verified) { const { error } = await cloud.client.auth.mfa.unenroll({ factorId: f.id }); if (error) throw error; } toast('Dos pasos desactivados', ''); mfaRenderStatus(); }
+        catch (e) { console.warn('mfa unenroll', e); toast('No se pudo desactivar. Volvé a entrar con tu código e intentá de nuevo.', 'err'); }
+      });
+    } else {
+      box.innerHTML = `<div class="eyebrow mb-8">Verificación en dos pasos</div><span class="chip chip--warn"><span class="cdot"></span>Desactivada</span>
+        <p class="hint">Recomendado: con dos pasos, quien tenga tu contraseña igual no entra. Necesitás una app de autenticación (Google Authenticator, 1Password, Authy).</p>
+        <button class="btn btn--signature btn--sm mt-8" id="mfaOn">Activar dos pasos</button>`;
+      const on = $('#mfaOn'); if (on) on.addEventListener('click', mfaEnrollFlow);
+    }
+  } catch (e) { console.warn('mfa status', e); box.innerHTML = `<div class="eyebrow mb-8">Verificación en dos pasos</div><p class="hint">No se pudo consultar el estado. Recargá la página.</p>`; }
+}
+async function mfaEnrollFlow() {
+  const box = $('#mfaBox'); if (!box) return;
+  try {
+    const st = await mfaStatus();
+    for (const f of st.pending) { await cloud.client.auth.mfa.unenroll({ factorId: f.id }); } // limpiar intentos viejos
+    const { data, error } = await cloud.client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Tablero Nola' });
+    if (error) throw error;
+    box.innerHTML = `<div class="eyebrow mb-8">Verificación en dos pasos</div>
+      <p class="hint" style="margin-top:0">1. Escaneá el código con tu app de autenticación (o pegá la clave). 2. Escribí el código de 6 dígitos que te muestra.</p>
+      <div class="mfa-qr"><img src="${esc(data.totp.qr_code)}" alt="Código QR para la app de autenticación"><div style="flex:1;min-width:200px"><div class="field-inline"><label>Clave manual</label><div class="secret">${esc(data.totp.secret)}</div></div>
+      <div class="field mt-8"><label>Código de 6 dígitos</label><input class="input" type="text" id="mfaCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+      <div class="flex gap-8 wrap"><button class="btn btn--primary btn--sm" id="mfaConfirm">Confirmar y activar</button><button class="btn btn--ghost btn--sm" id="mfaCancel">Cancelar</button></div></div></div>`;
+    $('#mfaCancel').addEventListener('click', async () => { try { await cloud.client.auth.mfa.unenroll({ factorId: data.id }); } catch (e) {} mfaRenderStatus(); });
+    $('#mfaConfirm').addEventListener('click', async () => {
+      const code = ($('#mfaCode').value || '').trim();
+      if (!/^\d{6}$/.test(code)) { toast('Escribí los 6 dígitos', 'err'); return; }
+      try {
+        const { data: ch, error: e1 } = await cloud.client.auth.mfa.challenge({ factorId: data.id }); if (e1) throw e1;
+        const { error: e2 } = await cloud.client.auth.mfa.verify({ factorId: data.id, challengeId: ch.id, code }); if (e2) throw e2;
+        toast('Dos pasos activados', 'ok'); mfaRenderStatus();
+      } catch (e) { console.warn('mfa verify', e); toast('Código incorrecto o vencido. Probá con el siguiente.', 'err'); }
+    });
+    $('#mfaCode').focus();
+  } catch (e) { console.warn('mfa enroll', e); toast('No se pudo iniciar la activación. Recargá e intentá de nuevo.', 'err'); }
+}
+async function changePassword(p1, p2) {
+  if ((p1 || '').length < MIN_PASSWORD) throw userErr(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`);
+  if (p1 !== p2) throw userErr('Las dos contraseñas no coinciden');
+  const { error } = await cloud.client.auth.updateUser({ password: p1 });
+  if (error) { console.warn('updateUser', error); throw userErr(/reauthentication|recent/i.test(error.message || '') ? 'Por seguridad, salí y volvé a entrar antes de cambiar la contraseña.' : /same password|different from the old/i.test(error.message || '') ? 'Esa es la misma contraseña de ahora.' : 'No se pudo cambiar la contraseña.'); }
+}
+function userErr(msg) { const e = new Error(msg); e.user = true; return e; }
+const userMsg = (e, fallback) => (e && e.user) ? e.message : fallback;
+
+/* ----- Clave del modo local: hash SHA-256 guardado en este dispositivo ----- */
+async function hashKey(str) {
+  try {
+    if (window.crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('nola-tablero|' + str)); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); }
+  } catch (e) {}
+  let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return 'fnv-' + h.toString(16); // fallback (contextos sin crypto.subtle)
+}
+function localKeyHash() { try { return localStorage.getItem(LS_LOCAL_KEY) || ''; } catch (e) { return ''; } }
+async function setLocalKey(str) { const h = await hashKey(str); try { localStorage.setItem(LS_LOCAL_KEY, h); } catch (e) {} return h; }
+async function checkLocalKey(str) { const h = localKeyHash(); if (!h) return false; return (await hashKey(str)) === h; }
 
 /* ========================================================= NAV + RENDER LOOP */
 let S = null, D = null, current = 'resumen';
@@ -1361,6 +1450,19 @@ function bindAjustes() {
   });
   const cc = $('#cfgClear'); if (cc) cc.addEventListener('click', () => { localStorage.removeItem(LS_CLOUD); toast('Conexión quitada', 'ok'); renderAjustes(); });
   const cl = $('#ajCloudLogout'); if (cl) cl.addEventListener('click', async () => { if (cloud.client) await cloud.client.auth.signOut(); location.reload(); });
+  const ps = $('#pwSave'); if (ps) ps.addEventListener('click', async () => {
+    ps.disabled = true;
+    try { await changePassword($('#pw1').value, $('#pw2').value); $('#pw1').value = ''; $('#pw2').value = ''; toast('Contraseña cambiada', 'ok'); }
+    catch (e) { toast(userMsg(e, 'No se pudo cambiar la contraseña'), 'err'); }
+    finally { ps.disabled = false; }
+  });
+  const lk = $('#localKeyChange'); if (lk) lk.addEventListener('click', async () => {
+    const cur = prompt('Clave local actual:'); if (cur == null) return;
+    if (!(await checkLocalKey(cur))) { toast('Clave incorrecta', 'err'); return; }
+    const nw = prompt('Clave local nueva (mínimo 8 caracteres):'); if (nw == null) return;
+    if (nw.length < 8) { toast('Mínimo 8 caracteres', 'err'); return; }
+    await setLocalKey(nw); toast('Clave local cambiada', 'ok');
+  });
 }
 
 /* ========================================================= PERSISTENCIA LOCAL */
@@ -1462,10 +1564,10 @@ function importJSON(ev) {
 /* ========================================================= NUBE (Supabase) */
 const cloud = { client: null, user: null, saveTimer: null, applying: false, ready: false, lastStamp: null, token: null, pendingRemote: null, channel: null, subWasUp: false, resubTimer: null };
 const LS_BOUND = 'nola_tablero_cloud_bound'; // a qué usuario de nube pertenece el estado local
-// Conexión a la nube de Nola Labs ya configurada (la anon key es pública por diseño; la seguridad la da el RLS).
+// Conexión a la nube ya configurada (la publishable key es pública por diseño; la seguridad la dan el login, RLS y MFA).
 const DEFAULT_CLOUD = {
   url: 'https://baqevhsyawugvekqbwsm.supabase.co',
-  anonKey: '[redactado]',
+  anonKey: 'sb_publishable_Ol74-6Jpot5lRKT0YbIlbw_gy5QMPof',   // publishable key (pública por diseño y rotable desde Supabase → Settings → API Keys)
 };
 function loadCloudCfg() { try { return JSON.parse(localStorage.getItem(LS_CLOUD)) || DEFAULT_CLOUD; } catch (e) { return DEFAULT_CLOUD; } }
 function saveCloudCfg(c) { localStorage.setItem(LS_CLOUD, JSON.stringify(c)); }
@@ -1474,8 +1576,8 @@ async function initSupabase() {
   const cfg = loadCloudCfg();
   if (!cfg.url || !cfg.anonKey) return false;
   try {
-    const { createClient } = await import(SUPABASE_CDN);
-    cloud.client = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' } });
+    if (!window.supabase || !window.supabase.createClient) throw new Error('supabase-js no cargó (vendor/supabase.js)');
+    cloud.client = window.supabase.createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' } });
     cloud.client.auth.onAuthStateChange((_ev, session) => { cloud.token = session ? session.access_token : null; });
     // Regreso del login con Google: Supabase canjea el ?code= al crear el cliente; después limpiamos la URL
     const oauthErr = new URLSearchParams(location.search).get('error_description') || new URLSearchParams(location.hash.slice(1)).get('error_description');
@@ -1506,17 +1608,33 @@ async function signInWithGoogle() {
     btn.disabled = false; btn.innerHTML = label;
   }
 }
-// Sin auto-registro al fallar el login: mostramos el error real. El alta es una acción explícita (create=true).
-async function cloudSignIn(email, password, create) {
-  if (create) {
-    const { data, error } = await cloud.client.auth.signUp({ email, password });
-    if (error) throw error;
-    if (!data.session) throw new Error('Cuenta creada. Revisá tu correo para confirmar y volvé a entrar.');
-    cloud.user = data.user; return;
-  }
-  const { data, error } = await cloud.client.auth.signInWithPassword({ email, password });
-  if (error) throw new Error('Correo o contraseña incorrectos.');
+// Login con correo y contraseña. No hay registro desde la app: el tablero es de un solo usuario
+// (la cuenta se crea en Supabase → Authentication → Users).
+let captchaToken = null;
+async function cloudSignIn(email, password) {
+  const opts = captchaToken ? { captchaToken } : undefined;
+  const { data, error } = await cloud.client.auth.signInWithPassword({ email, password, options: opts });
+  if (error) { console.warn('signIn', error.status, error.name); throw userErr(/captcha/i.test(error.message || '') ? 'Completá la verificación anti-robots e intentá de nuevo.' : 'Correo o contraseña incorrectos.'); }
   cloud.user = data.user;
+}
+// ¿La cuenta tiene dos pasos activados y la sesión todavía no los pasó?
+async function mfaRequired() {
+  try { const { data, error } = await cloud.client.auth.mfa.getAuthenticatorAssuranceLevel(); if (error || !data) return false; return data.nextLevel === 'aal2' && data.currentLevel !== 'aal2'; }
+  catch (e) { return false; }
+}
+async function mfaVerifyLogin(code) {
+  const { data: lf, error: e1 } = await cloud.client.auth.mfa.listFactors(); if (e1) throw e1;
+  const f = ((lf && lf.totp) || []).find(x => x.status === 'verified');
+  if (!f) throw userErr('No hay un factor de dos pasos verificado.');
+  const { data: ch, error: e2 } = await cloud.client.auth.mfa.challenge({ factorId: f.id }); if (e2) throw e2;
+  const { error: e3 } = await cloud.client.auth.mfa.verify({ factorId: f.id, challengeId: ch.id, code }); if (e3) throw userErr('Código incorrecto o vencido.');
+}
+// CAPTCHA opcional (Cloudflare Turnstile) en el formulario de entrada
+function loadCaptcha() {
+  if (!CAPTCHA_SITE_KEY) return;
+  const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async = true;
+  s.onload = () => { try { window.turnstile.render('#captcha', { sitekey: CAPTCHA_SITE_KEY, callback: t => { captchaToken = t; }, 'expired-callback': () => { captchaToken = null; } }); } catch (e) { console.warn('turnstile', e); } };
+  document.head.appendChild(s);
 }
 // Distingue "no hay fila" (data:null) de "falló la lectura" (ok:false) para no sobrescribir la nube por un blip.
 // Devuelve también el updated_at de la fila (stamp) para escrituras condicionales.
@@ -1681,15 +1799,27 @@ function unlock() {
   go('resumen');
 }
 
+let lockStage = 'login'; // 'login' | 'mfa'
+function showMfaStage() {
+  lockStage = 'mfa';
+  $('#emailField').hidden = true; $('#keyField').hidden = true; $('#mfaField').hidden = false;
+  const gb = $('#googleBtn'), go_ = $('#lockOr'), gh = $('#googleHint'); if (gb) gb.hidden = true; if (go_) go_.hidden = true; if (gh) gh.hidden = true;
+  $('#lockSub').textContent = 'Segundo paso: el código de tu app de autenticación';
+  const btn = $('#lockBtn'); btn.textContent = 'Verificar'; btn.disabled = false;
+  $('#lockCode').value = ''; $('#lockCode').focus();
+}
+// Tras autenticarse (contraseña, Google o sesión previa): pasar por los dos pasos si están activados
+async function afterSignIn() {
+  if (await mfaRequired()) { showMfaStage(); return; }
+  await enterCloud();
+}
 async function bootLock() {
-  const cfg = loadCloudCfg();
   const cloudReady = await initSupabase();
   const lockSub = $('#lockSub'), keyLabel = $('#keyLabel'), emailField = $('#emailField'), lockMode = $('#lockMode');
+  const hasLocalKey = !!localKeyHash();
 
   if (cloudReady) {
-    // modo nube: login real
     emailField.hidden = false;
-    if ($('#signupRow')) $('#signupRow').hidden = false;
     keyLabel.textContent = 'Contraseña';
     lockSub.innerHTML = 'Login en la nube · sincroniza tus dispositivos';
     lockMode.innerHTML = 'Modo nube activo: entrá con tu correo y contraseña, o con Google.';
@@ -1698,33 +1828,55 @@ async function bootLock() {
     if (go_) go_.hidden = false;
     if (gh) gh.hidden = false;
     if (cloud.oauthError) $('#lockErr').textContent = 'Google no pudo completar el ingreso: ' + cloud.oauthError;
-    if (cloud.user) { await enterCloud(); return; }  // sesión ya activa
+    loadCaptcha();
+    if (cloud.user) { await afterSignIn(); return; }  // sesión ya activa (o regreso de Google)
   } else {
-    lockMode.innerHTML = 'Modo local. <a id="goCloudHint">¿Cómo activar la nube?</a>';
+    if (hasLocalKey) {
+      lockMode.innerHTML = 'Modo local: los datos viven solo en este dispositivo. <button type="button" class="lock-link" id="localReset">¿Olvidaste la clave local?</button>';
+    } else {
+      keyLabel.textContent = 'Creá tu clave local (mínimo 8 caracteres)';
+      $('#lockKey').placeholder = 'una clave que solo vos sepas';
+      $('#lockBtn').textContent = 'Crear clave y entrar';
+      lockMode.innerHTML = 'Modo local: sin nube, los datos y esta clave viven solo en este navegador.';
+    }
   }
 
   $('#lockForm').addEventListener('submit', async ev => {
     ev.preventDefault();
     const err = $('#lockErr'); err.textContent = '';
-    const key = $('#lockKey').value;
     const btn = $('#lockBtn');
     if (cloudReady) {
-      const email = $('#lockEmail').value.trim();
-      const create = $('#signupChk') && $('#signupChk').checked;
-      if (!email) { err.textContent = 'Escribí tu correo'; return; }
-      btn.textContent = create ? 'Creando…' : 'Entrando…'; btn.disabled = true;
-      try {
-        await cloudSignIn(email, key, create);
-        await enterCloud();
-      } catch (e) {
-        err.textContent = e.message || 'No se pudo entrar'; btn.textContent = 'Entrar'; btn.disabled = false;
+      if (lockStage === 'mfa') {
+        const code = ($('#lockCode').value || '').trim();
+        if (!/^\d{6}$/.test(code)) { err.textContent = 'Escribí los 6 dígitos'; return; }
+        btn.textContent = 'Verificando…'; btn.disabled = true;
+        try { await mfaVerifyLogin(code); await enterCloud(); }
+        catch (e) { console.warn('mfa login', e); err.textContent = userMsg(e, 'No se pudo verificar el código'); btn.textContent = 'Verificar'; btn.disabled = false; }
+        return;
       }
+      const email = $('#lockEmail').value.trim(), key = $('#lockKey').value;
+      if (!email) { err.textContent = 'Escribí tu correo'; return; }
+      btn.textContent = 'Entrando…'; btn.disabled = true;
+      try { await cloudSignIn(email, key); $('#lockKey').value = ''; await afterSignIn(); }
+      catch (e) { err.textContent = userMsg(e, 'No se pudo entrar'); btn.textContent = 'Entrar'; btn.disabled = false; }
     } else {
-      if (key === ACCESS_KEY) { unlock(); }
+      const key = $('#lockKey').value;
+      if (!localKeyHash()) {
+        if (key.length < 8) { err.textContent = 'Mínimo 8 caracteres'; return; }
+        await setLocalKey(key); $('#lockKey').value = ''; unlock(); return;
+      }
+      if (await checkLocalKey(key)) { $('#lockKey').value = ''; unlock(); }
       else { err.textContent = 'Clave incorrecta'; $('#lockKey').value = ''; }
     }
   });
-  document.addEventListener('click', e => { if (e.target && e.target.id === 'goCloudHint') { toast('Entrá con [redactado] y andá a “Nube · Ajustes”.', ''); } });
+  document.addEventListener('click', e => {
+    if (e.target && e.target.id === 'localReset') {
+      if (confirm('Para restablecer la clave local hay que borrar los datos guardados en este navegador (si usás la nube, ahí siguen intactos). ¿Continuar?')) {
+        try { localStorage.removeItem(LS_LOCAL_KEY); localStorage.removeItem(LS_STATE); localStorage.removeItem(LS_BOUND); } catch (x) {}
+        location.reload();
+      }
+    }
+  });
 }
 
 /* ========================================================= EVENTOS GLOBALES */

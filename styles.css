@@ -139,6 +139,11 @@ textarea { min-height: 72px; resize: vertical; }
 .lock-google { gap: 10px; background: #fff; }
 .lock-google .ico { width: 18px; height: 18px; }
 .lock-hint { font-size: 11.5px; color: var(--verde-60); margin-top: 10px; line-height: 1.45; }
+.lock-link { display: inline-block; margin-top: 12px; font-size: 11.5px; color: var(--verde-60); text-decoration: underline; cursor: pointer; background: none; border: none; font-family: inherit; }
+#captcha:not(:empty) { margin: 8px 0 12px; display: flex; justify-content: center; }
+.mfa-qr { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.mfa-qr img { width: 172px; height: 172px; background: #fff; border-radius: 12px; padding: 8px; border: 1px solid var(--cyprus-14); }
+.secret { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; background: var(--crema-3); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--cyprus-14); }
 .lock-mode a { font-weight: 700; cursor: pointer; text-decoration: underline; }
 
 /* ============================================================== BUTTONS */

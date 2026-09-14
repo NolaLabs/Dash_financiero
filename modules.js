@@ -67,15 +67,35 @@ const docById = id => (S.docs || []).find(x => x.id === id) || null;
 const safeName = n => String(n || 'archivo').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 80);
 const fmtBytes = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b > 1024 ? Math.round(b / 1024) + ' KB' : b + ' B';
 
+const DOC_MAX_BYTES = 10 * 1048576;
+const DOC_TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv' };
+// Detecta el tipo real por la cabecera del archivo (no por lo que diga el navegador) y lo cruza con la extensión
+async function sniffDocType(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const want = DOC_TYPES[ext];
+  if (!want) throw userErr('Formato no permitido. Subí PDF, imagen (PNG/JPG/WebP), Word, Excel o CSV.');
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const s = (a, b) => a.every((v, i) => head[i] === v);
+  const ok = ext === 'pdf' ? s([0x25, 0x50, 0x44, 0x46])
+    : ext === 'png' ? s([0x89, 0x50, 0x4E, 0x47])
+    : (ext === 'jpg' || ext === 'jpeg') ? s([0xFF, 0xD8, 0xFF])
+    : ext === 'webp' ? (s([0x52, 0x49, 0x46, 0x46]) && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50)
+    : (ext === 'docx' || ext === 'xlsx') ? s([0x50, 0x4B, 0x03, 0x04])
+    : ext === 'csv' ? !head.slice(0, 8).some(b => b === 0) // texto plano
+    : false;
+  if (!ok) throw userErr('El contenido del archivo no coincide con su extensión .' + ext);
+  return want;
+}
 async function docUpload(file, meta) {
   if (!file) return null;
-  if (file.size > 20 * 1048576) throw new Error('Máximo 20 MB por archivo');
+  if (file.size > DOC_MAX_BYTES) throw userErr('Máximo 10 MB por archivo');
+  const mime = await sniffDocType(file);
   const id = uid();
-  const doc = { id, module: meta.module || 'otro', refId: meta.refId || null, year: meta.year || String(new Date().getFullYear()), name: file.name, size: file.size, mime: file.type || 'application/octet-stream', at: Date.now(), storage: 'local', path: null };
+  const doc = { id, module: meta.module || 'otro', refId: meta.refId || null, year: meta.year || String(new Date().getFullYear()), name: file.name, size: file.size, mime, at: Date.now(), storage: 'local', path: null };
   if (cloud.client && cloud.user) {
     const path = `${cloud.user.id}/${doc.module}/${doc.year}/${Date.now()}-${safeName(file.name)}`;
     const { error } = await cloud.client.storage.from(DOCS_BUCKET).upload(path, file, { contentType: doc.mime, upsert: false });
-    if (error) throw new Error('No se pudo subir a la nube: ' + (error.message || error));
+    if (error) { console.warn('storage upload', error); throw userErr('No se pudo subir el archivo a la nube. Revisá la conexión e intentá de nuevo.'); }
     doc.storage = 'cloud'; doc.path = path;
   } else {
     await idb.put(id, file);
@@ -90,16 +110,16 @@ async function docOpen(id) {
   try {
     let url;
     if (doc.storage === 'cloud') {
-      if (!cloud.client || !cloud.user) throw new Error('Este archivo vive en la nube: entrá con tu cuenta para verlo.');
+      if (!cloud.client || !cloud.user) throw userErr('Este archivo vive en la nube: entrá con tu cuenta para verlo.');
       const { data, error } = await cloud.client.storage.from(DOCS_BUCKET).createSignedUrl(doc.path, 600);
       if (error) throw error; url = data.signedUrl;
     } else {
       const blob = await idb.get(id);
-      if (!blob) throw new Error('Este archivo se guardó en otro dispositivo (modo local).');
+      if (!blob) throw userErr('Este archivo se guardó en otro dispositivo (modo local).');
       url = URL.createObjectURL(blob);
     }
     if (w) w.location = url; else window.open(url, '_blank');
-  } catch (e) { if (w) w.close(); toast(e.message || 'No se pudo abrir', 'err'); }
+  } catch (e) { if (w) w.close(); console.warn('docOpen', e); toast(userMsg(e, 'No se pudo abrir el archivo'), 'err'); }
 }
 async function docDelete(id) {
   const doc = docById(id); if (!doc) return;
@@ -144,7 +164,7 @@ async function onDocFileChosen(ev) {
     applyDocTarget(target, doc.id);
     toast(doc.storage === 'cloud' ? 'Archivo guardado en la nube' : 'Archivo guardado en este dispositivo', 'ok');
     re();
-  } catch (e) { toast(e.message || 'No se pudo adjuntar', 'err'); if (btn) btn.classList.remove('busy'); }
+  } catch (e) { console.warn('docUpload', e); toast(userMsg(e, 'No se pudo adjuntar el archivo'), 'err'); if (btn) btn.classList.remove('busy'); }
 }
 
 /* ========================================================= LIBRO DE MOVIMIENTOS */
