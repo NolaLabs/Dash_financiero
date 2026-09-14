@@ -1475,12 +1475,36 @@ async function initSupabase() {
   if (!cfg.url || !cfg.anonKey) return false;
   try {
     const { createClient } = await import(SUPABASE_CDN);
-    cloud.client = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+    cloud.client = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' } });
     cloud.client.auth.onAuthStateChange((_ev, session) => { cloud.token = session ? session.access_token : null; });
+    // Regreso del login con Google: Supabase canjea el ?code= al crear el cliente; después limpiamos la URL
+    const oauthErr = new URLSearchParams(location.search).get('error_description') || new URLSearchParams(location.hash.slice(1)).get('error_description');
+    if (oauthErr) cloud.oauthError = oauthErr;
     const { data } = await cloud.client.auth.getSession();
     if (data && data.session) { cloud.user = data.session.user; cloud.token = data.session.access_token; }
+    if (/[?&](code|error)=|access_token=|error_description=/.test(location.search + location.hash)) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
     return true;
   } catch (e) { console.warn('Supabase no disponible:', e); cloud.client = null; return false; }
+}
+// Login con Google (OAuth vía Supabase, flujo PKCE). Requiere el proveedor habilitado en
+// Supabase → Authentication → Providers → Google, y la URL del tablero en la lista de Redirect URLs.
+async function signInWithGoogle() {
+  const btn = $('#googleBtn'), err = $('#lockErr');
+  if (!cloud.client || !btn) return;
+  err.textContent = '';
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.textContent = 'Abriendo Google…';
+  try {
+    const redirectTo = location.origin + location.pathname;
+    const { error } = await cloud.client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo, queryParams: { prompt: 'select_account' } } });
+    if (error) throw error;
+  } catch (e) {
+    const m = String(e && e.message || '');
+    err.textContent = /not enabled|unsupported provider/i.test(m)
+      ? 'Google todavía no está habilitado en la nube. Falta activarlo en Supabase → Authentication → Providers → Google.'
+      : (m || 'No se pudo abrir el login de Google');
+    btn.disabled = false; btn.innerHTML = label;
+  }
 }
 // Sin auto-registro al fallar el login: mostramos el error real. El alta es una acción explícita (create=true).
 async function cloudSignIn(email, password, create) {
@@ -1668,7 +1692,12 @@ async function bootLock() {
     if ($('#signupRow')) $('#signupRow').hidden = false;
     keyLabel.textContent = 'Contraseña';
     lockSub.innerHTML = 'Login en la nube · sincroniza tus dispositivos';
-    lockMode.innerHTML = 'Modo nube activo. Usá tu correo y la clave <b>[redactado]</b>.';
+    lockMode.innerHTML = 'Modo nube activo: entrá con tu correo y contraseña, o con Google.';
+    const gb = $('#googleBtn'), go_ = $('#lockOr'), gh = $('#googleHint');
+    if (gb) { gb.hidden = false; gb.addEventListener('click', signInWithGoogle); }
+    if (go_) go_.hidden = false;
+    if (gh) gh.hidden = false;
+    if (cloud.oauthError) $('#lockErr').textContent = 'Google no pudo completar el ingreso: ' + cloud.oauthError;
     if (cloud.user) { await enterCloud(); return; }  // sesión ya activa
   } else {
     lockMode.innerHTML = 'Modo local. <a id="goCloudHint">¿Cómo activar la nube?</a>';

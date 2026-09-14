@@ -134,6 +134,11 @@ textarea { min-height: 72px; resize: vertical; }
 .input:focus, input:focus, select:focus, textarea:focus { outline: none; border-color: var(--cyprus); box-shadow: 0 0 0 3px var(--cyprus-08); }
 .lock-err { color: var(--rust); font-size: 13px; font-weight: 700; min-height: 18px; margin: 4px 0 8px; }
 .lock-mode { font-size: 12px; color: var(--verde-60); margin-top: 18px; }
+.lock-or { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: var(--verde-60); font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; }
+.lock-or::before, .lock-or::after { content: ''; flex: 1; height: 1px; background: var(--cyprus-14); }
+.lock-google { gap: 10px; background: #fff; }
+.lock-google .ico { width: 18px; height: 18px; }
+.lock-hint { font-size: 11.5px; color: var(--verde-60); margin-top: 10px; line-height: 1.45; }
 .lock-mode a { font-weight: 700; cursor: pointer; text-decoration: underline; }
 
 /* ============================================================== BUTTONS */
@@ -278,9 +283,11 @@ textarea { min-height: 72px; resize: vertical; }
   color: var(--cyprus); text-transform: uppercase; margin-top: 10px;
 }
 .hero .lead { color: var(--verde-72); font-size: 14.5px; margin-top: 12px; max-width: 720px; }
+/* La cifra protagonista nunca se parte ni se monta sobre las secundarias: el bloque principal toma
+   su ancho natural y las cifras secundarias se acomodan al lado o bajan de fila. */
 .hero-fig {
   position: relative; overflow: hidden; margin-top: 18px;
-  display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(auto-fit, minmax(150px, 1fr)); gap: 18px; align-items: end;
+  display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-end;
   padding: 24px 26px; border-radius: var(--radius-lg);
   background: linear-gradient(150deg, #01524d 0%, var(--cyprus) 55%, #00302e 100%);
   color: var(--crema); box-shadow: var(--shadow-dark);
@@ -293,16 +300,17 @@ textarea { min-height: 72px; resize: vertical; }
 .hf-label { display: block; font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: var(--jade-3); }
 .hf-value {
   display: block; font-family: var(--font-display); font-weight: 800;
-  font-size: clamp(42px, 6.2vw, 80px); line-height: 1; letter-spacing: -.5px; color: var(--crema);
-  font-variant-numeric: tabular-nums; margin-top: 6px;
+  font-size: clamp(40px, 5.6vw, 76px); line-height: 1; letter-spacing: -.5px; color: var(--crema);
+  font-variant-numeric: tabular-nums; margin-top: 6px; white-space: nowrap;
 }
 .hf-value.neg { color: #f2c6b1; }
 .hf-sub { display: block; font-size: 12.5px; color: rgba(240,237,229,0.74); margin-top: 8px; line-height: 1.45; }
-.hf-side { position: relative; z-index: 1; padding-left: 16px; border-left: 1px solid rgba(240,237,229,0.16); }
+.hf-side { position: relative; z-index: 1; flex: 1 1 170px; min-width: 150px; max-width: 340px; padding-left: 16px; border-left: 1px solid rgba(240,237,229,0.16); }
+.hf-side .hf-label { max-width: 22ch; }
 .hf-num { display: block; font-family: var(--font-display); font-weight: 700; font-size: 30px; line-height: 1; color: var(--crema); margin-top: 6px; font-variant-numeric: tabular-nums; }
 .hf-num.pos { color: var(--jade); }
 .hf-num.neg { color: #f2c6b1; }
-.hf-main { position: relative; z-index: 1; }
+.hf-main { position: relative; z-index: 1; flex: 1 1 auto; max-width: 100%; }
 .hf-chips { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .hero-fig .chip--ok { background: rgba(45,125,111,0.30); color: #bfe6da; }
 .hero-fig .chip--ok .cdot { background: #6fd3bf; }
@@ -712,7 +720,9 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
   .g-2, .g-3, .g-4 { grid-template-columns: 1fr; }
   .g-6 { grid-template-columns: repeat(2, 1fr); }
   .span-2 { grid-column: span 1; }
-  .hero-fig { grid-template-columns: 1fr; padding: 20px; }
+  .hero-fig { padding: 20px; gap: 14px; }
+  .hf-main, .hf-side { flex-basis: 100%; max-width: 100%; }
+  .hf-value { white-space: normal; }
   .hf-side { padding-left: 0; border-left: none; padding-top: 12px; border-top: 1px solid rgba(240,237,229,0.16); }
   .mgrid { grid-template-columns: repeat(3, 1fr); }
   .mstrip { grid-template-columns: repeat(3, 1fr); }
