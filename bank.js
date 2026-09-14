@@ -389,7 +389,7 @@ async function bankImportFile(file, opts = {}) {
   const acc = bankAccounts()[parsed.acctLast4];
   const side = acc ? acc.side : 'personal';
   // conciliar el saldo solo si el extracto es reciente (un extracto viejo no representa el saldo de hoy)
-  bankImp = { parsed, side, fileName: file.name, skipTiny: true, setBalance: daysSince(parsed.period.to) <= 31, rows: [] };
+  bankImp = { parsed, side, fileName: file.name, file, skipTiny: true, setBalance: daysSince(parsed.period.to) <= 31, rows: [] };
   bankBuildRows();
   return bankImp;
 }
@@ -452,7 +452,7 @@ function bankCommit() {
   });
   const accs = bankAccounts();
   const prev = accs[P.acctLast4] || {};
-  accs[P.acctLast4] = { bank: P.bank, side, label: prev.label || (P.bank + ' ···' + P.acctLast4), reconciledTo: (prev.reconciledTo && prev.reconciledTo > P.period.to) ? prev.reconciledTo : P.period.to, balance: (prev.reconciledTo && prev.reconciledTo > P.period.to) ? prev.balance : (P.summary ? P.summary.final : prev.balance), main: prev.main !== undefined ? prev.main : true, updatedAt: Date.now() };
+  accs[P.acctLast4] = Object.assign({}, prev, { bank: P.bank, side, label: prev.label || (P.bank + ' ···' + P.acctLast4), reconciledTo: (prev.reconciledTo && prev.reconciledTo > P.period.to) ? prev.reconciledTo : P.period.to, balance: (prev.reconciledTo && prev.reconciledTo > P.period.to) ? prev.balance : (P.summary ? P.summary.final : prev.balance), main: prev.main !== undefined ? prev.main : true, statements: Array.isArray(prev.statements) ? prev.statements : [], updatedAt: Date.now() }); // conserva statements y demás campos de la cuenta
   // conciliación: el saldo de la cuenta principal del lado pasa a ser el del extracto (si es el más reciente)
   const a = accs[P.acctLast4];
   if (bankImp.setBalance && a.main && a.reconciledTo === P.period.to && P.summary) {
@@ -537,11 +537,15 @@ function bankPanelClick(act, p) {
     case 'bk:cancel': bankImp = null; bankQueue = []; re(); return true;
     case 'bk:ok': { const r = bankImp.rows[+p[0]]; if (r) r.review = false; re(); return true; }
     case 'bk:commit': {
+      const file = bankImp.file, P = bankImp.parsed;
       const res = bankCommit();
-      toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}${res.flipped ? ` · ${res.flipped} envíos de Bancolombia reconocidos como recargas propias` : ''}`, 'ok');
+      if (!bankAuto) toast(`${res.bank}: ${res.added} movimientos importados${res.linkedPay ? ` · ${res.linkedPay} pagos marcados` : ''}${res.linkedPila ? ` · ${res.linkedPila} planillas` : ''}${res.flipped ? ` · ${res.flipped} envíos de Bancolombia reconocidos como recargas propias` : ''}`, 'ok');
       mvYear = res.period.to.slice(0, 4); mvAcc = res.side; re();
-      if (bankQueue.length) bankNext();
+      bankArchive(file, P).then(() => { if (!bankAuto) re(); }).catch(e => { console.warn('bankArchive', e); toast(userMsg(e, 'El extracto se importó pero no se pudo archivar el archivo'), 'err'); });
+      if (bankQueue.length || bankAuto) bankNext();
       return true; }
+    case 'bk:folder': { const inp = $('#bulkFiles'); if (inp) inp.click(); return true; }
+    case 'bk:bulk-close': bulkReport = null; re(); return true;
     case 'bk:rule': {
       const r = bankImp.rows[+p[0]]; if (!r) return true;
       const match = prompt('Crear regla: clasificar así toda descripción que contenga…', bankRuleHint(r.mv.desc));
@@ -554,15 +558,104 @@ function bankPanelClick(act, p) {
   }
   return false;
 }
+// Archiva el extracto importado en Documentos (bucket privado en la nube; IndexedDB en modo local) y lo cuelga de la cuenta
+async function bankArchive(file, P) {
+  if (!file || !P || !P.period) return null;
+  const ym = P.period.to.slice(0, 7); const a = bankAccounts()[P.acctLast4]; if (!a) return null;
+  if (!Array.isArray(a.statements)) a.statements = [];
+  const prev = a.statements.find(s => s.ym === ym); if (prev && docById(prev.docId)) return prev; // ya estaba archivado
+  const doc = await docUpload(file, { module: 'extractos', refId: P.acctLast4, year: ym.slice(0, 4) });
+  a.statements = a.statements.filter(s => s.ym !== ym).concat([{ ym, from: P.period.from, to: P.period.to, docId: doc.id, name: file.name, at: Date.now() }]).sort((x, y) => (x.ym < y.ym ? -1 : 1));
+  D = compute(S); S.meta.updatedAt = Date.now(); saveLocal(); queueCloudSave();
+  return a.statements.find(s => s.ym === ym);
+}
+// Cuentas registradas con sus extractos archivados (se muestra en Movimientos)
+function bankStatementsHTML() {
+  const A = bankAccounts(); const keys = Object.keys(A); if (!keys.length && !bulkReport) return '';
+  const rows = keys.map(k => { const a = A[k]; const st = (a.statements || []).filter(s => docById(s.docId)); return `<tr><td><b>${esc(a.label || k)}</b></td><td>${a.side === 'empresa' ? 'Empresa' : 'Personal'}${a.main ? ' · principal' : ''}</td><td>${a.reconciledTo ? fmtDate(a.reconciledTo) : '—'}</td><td>${a.balance != null ? fmtCOP(a.balance) : '—'}</td><td>${st.length ? st.map(s => `<button class="chip" data-act="doc:open" data-p="${s.docId}" title="${esc(s.name || '')}">${ico('paperclip')} ${esc(ymLabel(s.ym))}</button>`).join(' ') : '<span class="muted">ninguno</span>'}</td></tr>`; }).join('');
+  const rep = bulkReport ? `<div class="card soft" style="margin-bottom:12px"><div class="row between"><b>Carga de soportes</b><button class="iconbtn" data-act="bk:bulk-close" title="Cerrar" aria-label="Cerrar">×</button></div>
+      ${bulkReport.attached.length ? `<p><b>${bulkReport.attached.length} adjuntados:</b> ${bulkReport.attached.map(esc).join(' · ')}</p>` : ''}
+      ${bulkReport.skipped.length ? `<p><b>${bulkReport.skipped.length} sin destino</b> (adjuntalos desde su módulo):</p><ul class="hint">${bulkReport.skipped.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${bulkReport.statements.length ? `<p class="hint">${bulkReport.statements.length} extractos ${bankAuto ? 'importándose…' : 'procesados'}.</p>` : ''}</div>` : '';
+  return `${rep}<details class="bank-rules" ${bulkReport ? 'open' : ''}><summary>Cuentas y extractos archivados</summary><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Cuenta</th><th>Ámbito</th><th>Conciliada al</th><th>Saldo</th><th>Extractos</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">Todavía no importaste ningún extracto.</td></tr>'}</tbody></table></div>
+    <p class="hint">Cada extracto que importás queda archivado acá y en Documentos, con la fecha hasta la que la cuenta está conciliada. Con "Cargar carpeta de soportes" podés subir de una vez la carpeta completa: extractos, cuentas de cobro, planillas PILA y la declaración de renta se reconocen por el nombre del archivo y se enlazan solos.</p></details>`;
+}
+
+/* ========================================================= CARGA MASIVA DE SOPORTES */
+// Una carpeta entera (p. ej. FINANZAS/): los extractos van a la cola de importación automática (sin confirmar uno por uno);
+// cuentas de cobro, planillas PILA y declaración de renta se adjuntan y enlazan por el nombre del archivo.
+// Convenciones que reconoce: "cuenta-<n>-<nombre del equipo>" con fecha AAAA-MM-DD (día < 20 → cuenta del mes anterior),
+// "planilla-<número de planilla>", "renta-AG<año>" o "renta-<año>", y extractos con "extracto", "bancolombia", "nequi" o "cuentanu".
+let bankAuto = null;   // { imported, failed } mientras corre una tanda automática
+let bulkReport = null; // resumen de la última carga masiva (se muestra en Movimientos)
+const bulkNorm = s => normTxt(s).replace(/[^A-Z0-9]+/g, ' ').trim();
+function bulkYmFromName(name) {
+  const m = /(20\d{2})[-_.]?(0[1-9]|1[0-2])(?:[-_.]?(0[1-9]|[12]\d|3[01]))?/.exec(name); if (!m) return null;
+  let y = +m[1], mo = +m[2]; const d = m[3] ? +m[3] : null;
+  if (d != null && d < 20) { mo -= 1; if (mo === 0) { mo = 12; y -= 1; } } // una cuenta fechada a comienzos de mes es del mes anterior
+  return `${y}-${String(mo).padStart(2, '0')}`;
+}
+function bulkClassify(file) {
+  const n = bulkNorm(file.name); const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!DOC_TYPES[ext]) return { kind: 'skip', why: 'formato' };
+  if (/EXTRACTO|NEQUI|CUENTANU|BANCOLOMBIA|\bNU\b/.test(n) && (ext === 'xlsx' || ext === 'pdf')) return { kind: 'extracto' };
+  if (/PLANILLA|PILA/.test(n)) { const num = (/\b(\d{6,})\b/.exec(n) || [])[1]; const p = (S.pila || []).find(x => num && String(x.planilla) === num) || null; return p ? { kind: 'pila', p } : { kind: 'skip', why: num ? 'planilla ' + num + ' no está registrada en Seguridad social' : 'planilla sin número en el nombre' }; }
+  if (/CUENTA|COBRO/.test(n)) {
+    const toks = n.split(' ');
+    const t = (S.team || []).find(x => { const first = bulkNorm(x.name).split(' ')[0]; return first && toks.some(tk => tk.length >= 3 && first.startsWith(tk)); });
+    const ym = bulkYmFromName(file.name);
+    if (t && ym) return { kind: 'cuenta', t, ym, c: (S.cuentasCobro || []).find(x => x.personId === t.id && x.ym === ym) || null };
+    return { kind: 'skip', why: t ? 'cuenta sin fecha (AAAA-MM-DD) en el nombre' : 'cuenta sin el nombre de alguien del equipo' };
+  }
+  if (/RENTA|DECLARACION/.test(n)) { const y = (/AG(20\d{2})|\b(20\d{2})\b/.exec(n) || []); const year = y[1] || y[2]; if (year) return { kind: 'renta', year }; return { kind: 'skip', why: 'renta sin año en el nombre' }; }
+  return { kind: 'skip', why: 'no reconocido' };
+}
+async function bulkIntake(files) {
+  const all = Array.from(files || []).filter(f => f.name && !/^\./.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!all.length) return;
+  const rep = { attached: [], skipped: [], statements: [] };
+  for (const f of all) {
+    const c = bulkClassify(f);
+    try {
+      if (c.kind === 'extracto') { rep.statements.push(f); continue; }
+      if (c.kind === 'skip') { if (c.why !== 'formato') rep.skipped.push(f.name + ' · ' + c.why); continue; }
+      if (c.kind === 'pila') {
+        if (c.p.docId && docById(c.p.docId)) { rep.skipped.push(f.name + ' · esa planilla ya tiene PDF'); continue; }
+        const doc = await docUpload(f, { module: 'pila', refId: c.p.id, year: c.p.ym.slice(0, 4) }); c.p.docId = doc.id; rep.attached.push('Planilla ' + ymLabel(c.p.ym)); continue;
+      }
+      if (c.kind === 'cuenta') {
+        const cc = c.c || ccGet(c.t.id, c.ym);
+        if (cc.docCuentaId && docById(cc.docCuentaId)) { rep.skipped.push(f.name + ' · esa cuenta ya tiene soporte'); continue; }
+        const doc = await docUpload(f, { module: 'equipo', refId: cc.id, year: c.ym.slice(0, 4) }); cc.docCuentaId = doc.id;
+        if (cc.status === 'pendiente') { cc.status = 'recibida'; cc.receivedAt = cc.receivedAt || new Date().toISOString().slice(0, 10); }
+        rep.attached.push('Cuenta ' + c.t.name.split(' ')[0] + ' ' + ymLabel(c.ym)); continue;
+      }
+      if (c.kind === 'renta') {
+        const ry = rentaEnsure(c.year);
+        if (ry.declarationDocId && docById(ry.declarationDocId)) { rep.skipped.push(f.name + ' · la renta AG' + c.year + ' ya tiene PDF'); continue; }
+        const doc = await docUpload(f, { module: 'renta', refId: c.year, year: c.year }); ry.declarationDocId = doc.id; rep.attached.push('Renta AG' + c.year); continue;
+      }
+    } catch (e) { console.warn('bulk', f.name, e); rep.skipped.push(f.name + ' · ' + userMsg(e, 'no se pudo subir')); }
+  }
+  bulkReport = rep;
+  D = compute(S); S.meta.updatedAt = Date.now(); saveLocal(); queueCloudSave();
+  toast(`${rep.attached.length} soportes adjuntados${rep.skipped.length ? ` · ${rep.skipped.length} sin destino` : ''}${rep.statements.length ? ` · importando ${rep.statements.length} extractos…` : ''}`, 'ok');
+  if (current !== 'movimientos') go('movimientos'); else re();
+  if (rep.statements.length) { bankAuto = { imported: 0, failed: 0 }; bankQueue = rep.statements.slice(); bankNext(); }
+}
+async function onBulkFilesChosen(ev) { const files = Array.from(ev.target.files || []); ev.target.value = ''; if (files.length) bulkIntake(files); }
+
 let bankLastPassword = ''; // se reutiliza entre archivos de la misma tanda (no se guarda)
 async function bankNext() {
-  const file = bankQueue.shift(); if (!file) return;
+  const file = bankQueue.shift();
+  if (!file) { if (bankAuto) { const a = bankAuto; bankAuto = null; toast(`Extractos: ${a.imported} importados${a.failed ? ` · ${a.failed} con error` : ''}`, a.failed ? 'err' : 'ok'); re(); } return; }
   try {
     await bankImportFile(file, { password: bankLastPassword });
+    if (bankAuto) { bankImp.setBalance = false; bankAuto.imported++; bankPanelClick('bk:commit', []); return; } // tanda automática: sin confirmar uno por uno y sin tocar los saldos de hoy (eso se decide a mano)
     mvFormOpen = false;
     if (current !== 'movimientos') go('movimientos'); else re();
     const el = $('#bankPanel'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (e) { console.warn('bank import', e); toast((file.name + ': ') + userMsg(e, 'No se pudo leer el extracto'), 'err'); if (bankQueue.length) bankNext(); }
+  } catch (e) { console.warn('bank import', e); toast((file.name + ': ') + userMsg(e, 'No se pudo leer el extracto'), 'err'); if (bankAuto) bankAuto.failed++; if (bankQueue.length || bankAuto) bankNext(); }
 }
 async function onBankFileChosen(ev) {
   const files = Array.from(ev.target.files || []); ev.target.value = '';
@@ -571,4 +664,4 @@ async function onBankFileChosen(ev) {
   bankQueue = files.sort((a, b) => a.name.localeCompare(b.name));
   bankNext();
 }
-document.addEventListener('DOMContentLoaded', () => { const bf = $('#bankFile'); if (bf) bf.addEventListener('change', onBankFileChosen); });
+document.addEventListener('DOMContentLoaded', () => { const bf = $('#bankFile'); if (bf) bf.addEventListener('change', onBankFileChosen); const bk = $('#bulkFiles'); if (bk) bk.addEventListener('change', onBulkFilesChosen); });

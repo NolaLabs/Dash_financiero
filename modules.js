@@ -650,7 +650,7 @@ function renderMovimientos() {
       <select data-act="mv:year">${years.map(yy => `<option value="${yy}" ${yy === mvYear ? 'selected' : ''}>${yy}</option>`).join('')}</select>
       <div class="seg">${[['todos', 'Todos'], ['ingreso', 'Ingresos'], ['egreso', 'Egresos'], ['pendientes', 'Pendientes']].map(([k, l]) => `<button class="${mvType === k ? 'on' : ''}" data-act="mv:type" data-p="${k}">${l}</button>`).join('')}</div>
     </div>
-    <div class="right"><button class="btn btn--ghost" data-act="bk:pick" title="Subí el extracto XLSX del banco: se clasifica solo y concilia el saldo">${ico('download')} Importar extracto</button><button class="btn btn--signature" data-act="mv:form">${ico('plus')} Registrar movimiento</button></div>
+    <div class="right"><button class="btn btn--ghost" data-act="bk:folder" title="Elegí la carpeta con extractos, cuentas de cobro, planillas y renta: se adjuntan y enlazan solos por el nombre del archivo">${ico('paperclip')} Cargar carpeta de soportes</button><button class="btn btn--ghost" data-act="bk:pick" title="Subí el extracto XLSX del banco: se clasifica solo y concilia el saldo">${ico('download')} Importar extracto</button><button class="btn btn--signature" data-act="mv:form">${ico('plus')} Registrar movimiento</button></div>
   </div>
 
   ${typeof bankPanelHTML === 'function' ? bankPanelHTML() : ''}
@@ -678,6 +678,7 @@ function renderMovimientos() {
 
   ${(() => { const sp = personalSpendBySubcat(mvYear, mvAcc); const keys = Object.keys(sp).sort((a, b) => sp[b] - sp[a]); if (!keys.length) return ''; const tot = sum(Object.values(sp)); const SC = (typeof BANK_SUBCATS !== 'undefined') ? BANK_SUBCATS : {}; return `<div class="card mt-16"><div class="card-h"><h3>¿En qué se va la plata? · ${mvYear} (real, del extracto)</h3><span class="eyebrow">${fmtShort(tot)} en gastos personales y deuda</span></div>
     <div class="grid g-12"><div id="chart-spend"></div><div><table class="tbl"><thead><tr><th>Detalle</th><th class="r">Total</th><th class="r">%</th></tr></thead><tbody>${keys.map(k => `<tr><td>${esc(SC[k] || k)}</td><td class="r tabnum">${fmtCOP(sp[k])}</td><td class="r tabnum">${fmtPct(sp[k] / tot)}</td></tr>`).join('')}</tbody></table></div></div></div>`; })()}
+  ${typeof bankStatementsHTML === 'function' ? bankStatementsHTML() : ''}
   ${typeof bankRulesHTML === 'function' ? bankRulesHTML() : ''}
 
   <div class="card mt-16">
