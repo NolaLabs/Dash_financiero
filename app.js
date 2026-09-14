@@ -193,6 +193,7 @@ function compute(s) {
   const ingresosPersonales = ceoSalary + otherPersonalIncome;
   const expRows = s.personalExpenses.map(e => ({ ...e, monthly: monthlyOf(e, trm) }));
   const gastosPersonales = sum(expRows.map(e => e.monthly));
+  const metaPersonal = sum(expRows.map(e => e.period === 'monthly' ? cop(e.target != null ? e.target : e.amount, e.currency, trm) : monthlyOf(Object.assign({}, e, { amount: e.target != null ? e.target : e.amount }), trm)));
   const resultPersonal = ingresosPersonales - gastosPersonales;
   const savingsRate = ingresosPersonales ? resultPersonal / ingresosPersonales : 0;
   const deficit = Math.max(-resultPersonal, 0);
@@ -219,7 +220,7 @@ function compute(s) {
     runRate, metaProgress, realized, realizedPct,
     otherPersonalIncome, ingresosPersonales, expRows, gastosPersonales, resultPersonal,
     savingsRate, deficit, ahorros, runwayMonths, salaryToCoverLife, recurringNetGrowthNeeded,
-    catTotals, cajaEmpresa,
+    catTotals, cajaEmpresa, metaPersonal,
   };
   base.companyHealth = scoreCompany(base, s);
   base.personalHealth = scorePersonal(base, s);
@@ -707,32 +708,46 @@ function renderPersonal() {
     const share = d.ingresosPersonales ? e.monthly / d.ingresosPersonales : 0;
     const flag = share < 0.05 ? 'g' : share < 0.15 ? 'a' : 'r';
     const cat = CATS[e.category] || CATS.otro;
+    const target = cop(e.target != null ? e.target : e.amount, e.currency, d.trm);
+    const over = e.monthly - target;
     return `<tr>
-      <td><span class="flag ${flag}"></span> ${esc(e.name)}</td>
+      <td><span class="flag ${flag}"></span> ${esc(e.name)}${e.kind === 'variable' ? ' <span class="cat">variable</span>' : ''}</td>
       <td><span class="cat" style="color:${cat.color}">${cat.label}</span></td>
       <td class="r tabnum">${fmtCOP(e.monthly)}</td>
+      <td class="r tabnum">${fmtCOP(target)}</td>
+      <td class="r tabnum ${over > 1000 ? 'neg' : over < -1000 ? 'pos' : ''}">${over > 1000 ? '+' : ''}${Math.abs(over) > 1000 ? fmtShort(over) : '='}</td>
       <td class="r tabnum">${fmtPct(share, 1)}</td>
     </tr>`;
   }).join('');
+  const ahorroReal = d.ingresosPersonales - d.gastosPersonales, ahorroMeta = d.ingresosPersonales - d.metaPersonal;
+  const budgetHTML = (typeof budgetVsRealHTML === 'function') ? budgetVsRealHTML(d) : '';
   const incRows = [
     `<tr><td>Salario CEO</td><td class="r tabnum">${fmtCOP(d.ceoSalary)}</td></tr>`,
     ...s.personalIncome.map(i => `<tr><td>${esc(i.name)}${i.currency === 'USD' ? ` (${i.amount} USD)` : ''}</td><td class="r tabnum">${fmtCOP(cop(i.amount, i.currency, d.trm))}</td></tr>`),
   ].join('');
   const segs = Object.keys(d.catTotals).filter(k => d.catTotals[k] > 0).map(k => ({ label: CATS[k].label, value: d.catTotals[k], color: CATS[k].color }));
 
-  el.innerHTML = head('03', 'Personal', 'Tu presupuesto personal: ¿tu salario CEO cubre tu vida? Cada gasto muestra qué porcentaje de tu ingreso consume y un semáforo de impacto.') + `
+  el.innerHTML = head('03', 'Personal', 'Tu presupuesto personal con dos columnas: lo que gastás de verdad (promedio de los extractos) y la meta por rubro. Los rubros fijos se marcan en Pagos del mes; los variables se miden contra el extracto cuando lo importás.', {
+    label: 'Gasto personal real · promedio mensual', value: d.gastosPersonales, fmt: 'cop', cls: d.gastosPersonales > d.ingresosPersonales ? 'neg' : '',
+    sub: `Meta ${fmtCOP(d.metaPersonal)} · ${d.gastosPersonales > d.metaPersonal ? 'estás ' + fmtShort(d.gastosPersonales - d.metaPersonal) + ' por encima de la meta cada mes' : 'dentro de la meta'}`,
+    side: [
+      { label: 'Ingreso personal', value: d.ingresosPersonales, fmt: 'short' },
+      { label: 'Ahorro real / mes', value: ahorroReal, fmt: 'short', cls: ahorroReal >= 0 ? 'pos' : 'neg', sub: `${fmtPct(d.ingresosPersonales ? ahorroReal / d.ingresosPersonales : 0)} del ingreso` },
+      { label: 'Ahorro si cumplís la meta', value: ahorroMeta, fmt: 'short', cls: ahorroMeta >= 0 ? 'pos' : 'neg', sub: `${fmtPct(d.ingresosPersonales ? ahorroMeta / d.ingresosPersonales : 0)} del ingreso` },
+    ],
+  }) + budgetHTML + `
   <div class="grid g-4">
-    <div class="card kpi"><span class="klabel">Ingresos personales</span><span class="kval">${fmtCOP(d.ingresosPersonales)}</span><span class="ksub">Salario + trading</span></div>
-    <div class="card kpi"><span class="klabel">Gastos personales</span><span class="kval">${fmtCOP(d.gastosPersonales)}</span><span class="ksub">${s.personalExpenses.length} conceptos mensualizados</span></div>
+    <div class="card kpi"><span class="klabel">Ingresos personales</span><span class="kval">${fmtCOP(d.ingresosPersonales)}</span><span class="ksub">Salario + otros ingresos</span></div>
+    <div class="card kpi"><span class="klabel">Gastos personales (real)</span><span class="kval">${fmtCOP(d.gastosPersonales)}</span><span class="ksub">${s.personalExpenses.length} rubros · meta ${fmtShort(d.metaPersonal)}</span></div>
     <div class="card kpi"><span class="klabel">Resultado mensual</span><span class="kval" style="color:${d.resultPersonal >= 0 ? 'var(--sage)' : 'var(--rust)'}">${fmtCOP(d.resultPersonal)}</span><span class="ksub">${d.resultPersonal >= 0 ? 'Superávit' : 'Déficit a financiar con ahorros'}</span></div>
     <div class="card kpi--dark kpi"><span class="klabel">Runway personal</span><span class="kval">${d.deficit > 0 ? fmtMonths(d.runwayMonths) : '∞'}</span><span class="ksub">Ahorros ${fmtCOP(d.ahorros)}</span></div>
   </div>
 
   <div class="grid g-12 mt-16">
     <div class="card"><div class="card-h"><h3>Gastos · impacto por concepto</h3><span class="eyebrow">% de tu ingreso</span></div>
-      <table class="tbl"><thead><tr><th>Concepto</th><th>Categoría</th><th class="r">Mensual</th><th class="r">% ingreso</th></tr></thead>
-      <tbody>${expRows}<tr class="total"><td>Total</td><td></td><td class="r tabnum">${fmtCOP(d.gastosPersonales)}</td><td class="r tabnum">${fmtPct(d.ingresosPersonales ? d.gastosPersonales / d.ingresosPersonales : 0)}</td></tr></tbody></table>
-      <p class="card-note"><span class="flag g"></span> &lt;5% &nbsp; <span class="flag a"></span> 5–15% &nbsp; <span class="flag r"></span> &gt;15% del ingreso. Editá montos en <b>Datos · Editar</b>.</p>
+      <div class="tscroll"><table class="tbl"><thead><tr><th>Rubro</th><th>Categoría</th><th class="r">Real / mes</th><th class="r">Meta</th><th class="r">Dif.</th><th class="r">% ingreso</th></tr></thead>
+      <tbody>${expRows}<tr class="total"><td>Total</td><td></td><td class="r tabnum">${fmtCOP(d.gastosPersonales)}</td><td class="r tabnum">${fmtCOP(d.metaPersonal)}</td><td class="r tabnum ${d.gastosPersonales - d.metaPersonal > 0 ? 'neg' : 'pos'}">${d.gastosPersonales - d.metaPersonal > 0 ? '+' : ''}${fmtShort(d.gastosPersonales - d.metaPersonal)}</td><td class="r tabnum">${fmtPct(d.ingresosPersonales ? d.gastosPersonales / d.ingresosPersonales : 0)}</td></tr></tbody></table></div>
+      <p class="card-note"><span class="flag g"></span> &lt;5% &nbsp; <span class="flag a"></span> 5–15% &nbsp; <span class="flag r"></span> &gt;15% del ingreso. "Real" es el promedio de los extractos; la meta la editás en <b>Datos · Editar</b>.</p>
     </div>
     <div class="card"><div class="card-h"><h3>¿En qué se va la plata?</h3></div><div id="chart-pers"></div>
       <div class="card"><div class="card-h"><h3 style="font-size:13px">Ingresos</h3></div><table class="tbl"><tbody>${incRows}<tr class="total"><td>Total</td><td class="r tabnum">${fmtCOP(d.ingresosPersonales)}</td></tr></tbody></table></div>
@@ -879,6 +894,7 @@ function paymentItemsFor(s, ym) {
   });
   if ((Number(s.global.ceoSalary) || 0) > 0) items.push({ key: 'ceo', side: 'transfer', name: 'Tu salario CEO', detail: 'pasa de la cuenta empresa a tu cuenta personal', amount: s.global.ceoSalary, editable: { global: 'ceoSalary' } });
   s.personalExpenses.forEach(e => {
+    if (e.kind === 'variable') return; // los rubros variables se miden contra el extracto, no se "marcan"
     const q = clamp(Math.round(Number(e.dueMonth) || 1), 1, 12);
     const due = e.period === 'monthly'
       || (e.period === 'quarterly' && ((M - q) % 3 + 3) % 3 === 0)
@@ -1165,9 +1181,13 @@ function renderEditor() {
     <div class="field-inline"><label>Moneda</label><select data-list="personalIncome" data-id="${i.id}" data-field="currency"><option ${i.currency === 'COP' ? 'selected' : ''}>COP</option><option ${i.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
     <button class="iconbtn" data-del="personalIncome" data-id="${i.id}">✕</button></div>`).join('');
 
-  $('#ed-exp').innerHTML = s.personalExpenses.map(e => `<div class="repeat-row" style="grid-template-columns:1.3fr .85fr .65fr .95fr .95fr .75fr auto" data-row="personalExpenses" data-id="${e.id}">
-    ${repeatField('Concepto', e.name, '', { type: 'text' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="name"`)}
-    ${repeatField('Monto', e.amount, '', { step: '0.01' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="amount"`)}
+  const SUBC = (typeof BANK_SUBCATS !== 'undefined') ? BANK_SUBCATS : { otros: 'Otros' };
+  $('#ed-exp').innerHTML = s.personalExpenses.map(e => `<div class="repeat-row" style="grid-template-columns:1.4fr .8fr .8fr .6fr .8fr .8fr .7fr .9fr .7fr auto" data-row="personalExpenses" data-id="${e.id}">
+    ${repeatField('Rubro', e.name, '', { type: 'text' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="name"`)}
+    ${repeatField('Real / mes', e.amount, '', { step: '0.01' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="amount"`)}
+    ${repeatField('Meta', e.target != null ? e.target : e.amount, '', { step: '0.01' }).replace('data-edit=""', `data-list="personalExpenses" data-id="${e.id}" data-field="target"`)}
+    <div class="field-inline"><label>Tipo</label><select data-list="personalExpenses" data-id="${e.id}" data-field="kind"><option value="fijo" ${e.kind !== 'variable' ? 'selected' : ''}>Fijo</option><option value="variable" ${e.kind === 'variable' ? 'selected' : ''}>Variable</option></select></div>
+    <div class="field-inline"><label>Detalle (extracto)</label><select data-list="personalExpenses" data-id="${e.id}" data-field="subcat">${Object.keys(SUBC).map(k => `<option value="${k}" ${e.subcat === k ? 'selected' : ''}>${esc(SUBC[k])}</option>`).join('')}</select></div>
     <div class="field-inline"><label>Moneda</label><select data-list="personalExpenses" data-id="${e.id}" data-field="currency"><option ${e.currency === 'COP' ? 'selected' : ''}>COP</option><option ${e.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
     <div class="field-inline"><label>Periodo</label><select data-list="personalExpenses" data-id="${e.id}" data-field="period"><option value="monthly" ${e.period === 'monthly' ? 'selected' : ''}>Mensual</option><option value="quarterly" ${e.period === 'quarterly' ? 'selected' : ''}>Trimestral</option><option value="annual" ${e.period === 'annual' ? 'selected' : ''}>Anual</option></select></div>
     <div class="field-inline"><label>Categoría</label><select data-list="personalExpenses" data-id="${e.id}" data-field="category">${Object.keys(CATS).map(k => `<option value="${k}" ${e.category === k ? 'selected' : ''}>${CATS[k].label}</option>`).join('')}</select></div>
@@ -1513,7 +1533,12 @@ function migrate(st) {
   const mks = Object.keys(st.payments.months).sort();
   mks.slice(0, Math.max(0, mks.length - 24)).forEach(k => delete st.payments.months[k]);
   // gastos no mensuales: mes de cobro calendario (1..12) para saber en qué mes se pagan de verdad
-  st.personalExpenses.forEach(e => { if (e.period !== 'monthly') e.dueMonth = clamp(Math.round(Number(e.dueMonth) || 1), 1, 12); });
+  st.personalExpenses.forEach(e => {
+    if (e.period !== 'monthly') e.dueMonth = clamp(Math.round(Number(e.dueMonth) || 1), 1, 12);
+    if (e.kind !== 'variable') e.kind = 'fijo';
+    if (e.target == null || e.target === '') e.target = Number(e.amount) || 0;
+    if (!e.subcat) e.subcat = ({ vivienda: 'hogar', deuda: 'deuda', fijo: 'hogar', variable: 'otros', suscripcion: 'suscripciones', salud: 'salud' })[e.category] || 'otros';
+  });
   ['newClients', 'newHires'].forEach(k => {
     if (!Array.isArray(st.projection[k])) st.projection[k] = [];
     else { st.projection[k] = st.projection[k].filter(x => x && typeof x === 'object'); st.projection[k].forEach(x => { if (x.id == null) x.id = uid(); }); }

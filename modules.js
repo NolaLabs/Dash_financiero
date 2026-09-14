@@ -247,7 +247,10 @@ function ledgerSyncPayment(ym, key, it, on) {
   const cat = (key.indexOf('team:') === 0 || key === 'prest') ? 'nomina' : key.indexOf('lic:') === 0 ? 'herramientas' : key === 'ceo' ? 'salario_ceo' : 'gasto_personal';
   const today = localISO();
   const amt = it ? Number(it.amount) || 0 : 0;
-  S.ledger.push(ledgerNormalize({ id: uid(), date: ymOf(today) === ym ? today : ym + '-15', type: 'egreso', account: side === 'personal' ? 'personal' : 'empresa', category: cat, party: it ? String(it.name).replace(/^Nómina · /, '') : '', concept: it ? it.name : 'Pago del mes', gross: amt, withholding: 0, net: amt, status: 'hecho', applied: false, balanceBy: 'pagos', source: 'pago', refKey }));
+  const expItem = key.indexOf('exp:') === 0 ? (S.personalExpenses || []).find(x => x.id === key.slice(4)) : null;
+  const subcat = expItem ? (expItem.subcat || null) : (cat === 'herramientas' ? 'suscripciones' : null);
+  const category = expItem && expItem.category === 'deuda' ? 'deuda' : cat;
+  S.ledger.push(ledgerNormalize({ id: uid(), date: ymOf(today) === ym ? today : ym + '-15', type: 'egreso', account: side === 'personal' ? 'personal' : 'empresa', category, subcat, party: it ? String(it.name).replace(/^Nómina · /, '') : '', concept: it ? it.name : 'Pago del mes', gross: amt, withholding: 0, net: amt, status: 'hecho', applied: false, balanceBy: 'pagos', source: 'pago', refKey }));
 }
 function ledgerStats(s) {
   const L = Array.isArray(s.ledger) ? s.ledger : [];
@@ -580,6 +583,34 @@ let mvDraft = null;
 function mvNewDraft() { return { date: localISO(), type: 'ingreso', account: 'empresa', category: 'cliente', party: '', concept: '', gross: '', withholding: '', net: '', status: 'hecho', notes: '' }; }
 const ACC_LABEL = { empresa: 'Ámbito empresa', personal: 'Ámbito personal', todas: 'Todo' };
 function mvCatOptions(type, sel) { return Object.keys(LEDGER_CATS).filter(k => LEDGER_CATS[k].type === type || LEDGER_CATS[k].type === 'auto').map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(LEDGER_CATS[k].label)}</option>`).join(''); }
+function spendBySubcatMonth(ym) {
+  const out = {};
+  (S.ledger || []).filter(m => m.status === 'hecho' && m.type === 'egreso' && ledgerScope(m) === 'personal' && ymOf(m.date) === ym && ['gasto_personal', 'deuda', 'bancario'].includes(m.category)).forEach(m => {
+    const k = m.category === 'deuda' ? 'deuda' : m.category === 'bancario' ? 'bancario' : (m.subcat || 'otros');
+    out[k] = (out[k] || 0) + (Number(m.net) || 0);
+  });
+  return out;
+}
+// Card "Presupuesto vs real": meta por rubro contra lo que dice el extracto en los últimos 3 meses con datos
+function budgetVsRealHTML(d) {
+  const months = lastNMonths(4);
+  const have = months.filter(ym => Object.keys(spendBySubcatMonth(ym)).length);
+  if (!have.length) return `<div class="callout callout--jade mb-16"><span class="ci">◎</span><div class="ct"><b>Presupuesto vs. real por mes:</b> aparece acá cuando importés los extractos (Movimientos → Importar extracto). Mientras tanto, la columna "Real / mes" de abajo es el promedio de abril a junio.</div></div>`;
+  const items = S.personalExpenses.filter(e => e.currency === 'COP' && e.period === 'monthly');
+  const groups = {}; items.forEach(e => { const k = e.subcat || 'otros'; if (!groups[k]) groups[k] = { label: e.name, target: 0, names: [] }; groups[k].target += Number(e.target != null ? e.target : e.amount) || 0; groups[k].names.push(e.name); });
+  const cols = have.slice(-3);
+  const rows = Object.keys(groups).map(k => {
+    const g = groups[k]; const vals = cols.map(ym => spendBySubcatMonth(ym)[k] || 0);
+    const last = vals[vals.length - 1]; const pct = g.target ? last / g.target : 0;
+    const chip = last === 0 ? '<span class="chip chip--neutral"><span class="cdot"></span>sin datos</span>' : pct <= 1 ? '<span class="chip chip--ok"><span class="cdot"></span>en meta</span>' : pct <= 1.25 ? '<span class="chip chip--info"><span class="cdot"></span>+' + fmtPct(pct - 1) + '</span>' : '<span class="chip chip--warn"><span class="cdot"></span>+' + fmtPct(pct - 1) + '</span>';
+    return `<tr><td><b>${esc(g.names.length > 1 ? (BANK_SUBCATS[k] || k) : g.label)}</b>${g.names.length > 1 ? `<span class="sub">${esc(g.names.join(' · '))}</span>` : ''}</td><td class="r tabnum">${fmtCOP(g.target)}</td>${vals.map(v => `<td class="r tabnum ${v > g.target * 1.25 ? 'neg' : ''}">${v ? fmtCOP(v) : '—'}</td>`).join('')}<td>${chip}</td></tr>`;
+  }).join('');
+  const totT = sum(Object.values(groups).map(g => g.target)); const totV = cols.map(ym => sum(Object.values(spendBySubcatMonth(ym))));
+  return `<div class="card mb-16"><div class="card-h"><h3>Presupuesto vs. real · según el extracto</h3><span class="eyebrow">Meta mensual ${fmtShort(totT)}</span></div>
+    <div class="tscroll"><table class="tbl"><thead><tr><th>Rubro</th><th class="r">Meta</th>${cols.map(ym => `<th class="r">${esc(ymShort(ym))}</th>`).join('')}<th>Último mes</th></tr></thead>
+    <tbody>${rows}<tr class="total"><td>Total</td><td class="r tabnum">${fmtCOP(totT)}</td>${totV.map(v => `<td class="r tabnum ${v > totT ? 'neg' : 'pos'}">${fmtCOP(v)}</td>`).join('')}<td></td></tr></tbody></table></div>
+    <p class="card-note">Solo cuentan los meses con extracto importado. Un mes parcial (sin todas las cuentas) se ve más bajo de lo real.</p></div>`;
+}
 function personalSpendBySubcat(year, acc) {
   const out = {};
   (S.ledger || []).filter(m => m.status === 'hecho' && m.type === 'egreso' && (acc === 'todas' || ledgerScope(m) === acc) && (m.date || '').slice(0, 4) === String(year) && ['gasto_personal', 'deuda', 'bancario'].includes(m.category)).forEach(m => {
@@ -1129,20 +1160,27 @@ function migrateModules(st) {
       const pr = paid[key]; const amt = Number(pr.amount) || 0; if (!amt) return;
       const side = key.indexOf('exp:') === 0 ? 'personal' : 'empresa';
       const cat = (key.indexOf('team:') === 0 || key === 'prest') ? 'nomina' : key.indexOf('lic:') === 0 ? 'herramientas' : key === 'ceo' ? 'salario_ceo' : 'gasto_personal';
-      let party = '', concept = 'Pago del mes';
+      let party = '', concept = 'Pago del mes', subcat = null, category = cat;
       if (key.indexOf('team:') === 0) { const t = st.team.find(x => x.id === key.slice(5)); if (t) { party = t.name; concept = 'Nómina · ' + t.name; } }
-      else if (key.indexOf('lic:') === 0) { const l = st.licenses.find(x => x.id === key.slice(4)); if (l) { party = l.name; concept = l.name; } }
-      else if (key.indexOf('exp:') === 0) { const x = st.personalExpenses.find(q => q.id === key.slice(4)); if (x) { party = x.name; concept = x.name; } }
+      else if (key.indexOf('lic:') === 0) { const l = st.licenses.find(x => x.id === key.slice(4)); if (l) { party = l.name; concept = l.name; } subcat = 'suscripciones'; }
+      else if (key.indexOf('exp:') === 0) { const x = st.personalExpenses.find(q => q.id === key.slice(4)); if (x) { party = x.name; concept = x.name; subcat = x.subcat || null; if (x.category === 'deuda') category = 'deuda'; } }
       else if (key === 'ceo') { party = 'Salario CEO'; concept = 'Tu salario CEO'; }
       const at = pr.at ? localISO(new Date(pr.at)) : null;
       const date = at && ymOf(at) === ym ? at : ym + '-15';
-      st.ledger.push({ id: uid(), date, type: 'egreso', account: side, category: cat, party, concept, gross: amt, withholding: 0, net: amt, status: 'hecho', applied: false, balanceBy: 'pagos', source: 'pago', refKey, notes: '' });
+      st.ledger.push({ id: uid(), date, type: 'egreso', account: side, category, subcat, party, concept, gross: amt, withholding: 0, net: amt, status: 'hecho', applied: false, balanceBy: 'pagos', source: 'pago', refKey, notes: '' });
     });
   });
   // banco: cuentas conciliadas y reglas propias
   if (!st.bank || typeof st.bank !== 'object' || Array.isArray(st.bank)) st.bank = { accounts: {}, rules: [] };
   if (!st.bank.accounts || typeof st.bank.accounts !== 'object') st.bank.accounts = {};
   if (!Array.isArray(st.bank.rules)) st.bank.rules = [];
+  // entradas viejas de Pagos del mes sin detalle: tomar el del rubro
+  st.ledger.forEach(m => {
+    if (m.source !== 'pago' || m.subcat || !m.refKey) return;
+    const key = m.refKey.split('|')[1] || '';
+    if (key.indexOf('exp:') === 0) { const x = st.personalExpenses.find(q => q.id === key.slice(4)); if (x) { m.subcat = x.subcat || null; if (x.category === 'deuda') m.category = 'deuda'; } }
+    else if (key.indexOf('lic:') === 0) m.subcat = 'suscripciones';
+  });
   // renta: abrir el año en curso si no existe ninguno
   if (!Object.keys(st.renta.years).length) st.renta.years[String(new Date().getFullYear())] = rentaDefaults();
   Object.keys(st.renta.years).forEach(y => { const ry = st.renta.years[y]; if (!Array.isArray(ry.docs)) ry.docs = []; RENTA_DOCS.forEach(d => { if (!ry.docs.some(x => x.key === d.key)) ry.docs.push({ key: d.key, status: 'pendiente', docId: null, note: '' }); }); if (!ry.figures) ry.figures = {}; });
