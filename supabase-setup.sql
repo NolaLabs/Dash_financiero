@@ -46,3 +46,26 @@ alter publication supabase_realtime add table public.tableros;
 --   • Copiá Project URL y la anon public key (Settings → API) y pegalas
 --     en el tablero, pestaña "Nube · Ajustes".
 -- ============================================================================
+
+-- ============================================================================
+--  v2 (sep 2026) · Documentos adjuntos (cuentas de cobro, planillas PILA,
+--  comprobantes, declaración de renta). Bucket privado + RLS por carpeta de usuario:
+--  cada archivo vive en  <uid>/<módulo>/<año>/<archivo>  y solo su dueño lo ve.
+-- ============================================================================
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('documentos', 'documentos', false, 20971520)
+on conflict (id) do nothing;
+
+drop policy if exists "documentos: leer propios"    on storage.objects;
+drop policy if exists "documentos: subir propios"   on storage.objects;
+drop policy if exists "documentos: editar propios"  on storage.objects;
+drop policy if exists "documentos: borrar propios"  on storage.objects;
+
+create policy "documentos: leer propios" on storage.objects for select to authenticated
+  using (bucket_id = 'documentos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "documentos: subir propios" on storage.objects for insert to authenticated
+  with check (bucket_id = 'documentos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "documentos: editar propios" on storage.objects for update to authenticated
+  using (bucket_id = 'documentos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "documentos: borrar propios" on storage.objects for delete to authenticated
+  using (bucket_id = 'documentos' and (storage.foldername(name))[1] = auth.uid()::text);

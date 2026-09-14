@@ -18,8 +18,8 @@ const CATS = {
   vivienda:   { label: 'Vivienda',     color: '#004643' },
   deuda:      { label: 'Deuda',        color: '#B85C38' },
   fijo:       { label: 'Fijo',         color: '#2D7D6F' },
-  suscripcion:{ label: 'Suscripción',  color: '#C9883A' },
-  variable:   { label: 'Variable',     color: '#DB9C50' },
+  suscripcion:{ label: 'Suscripción',  color: '#7ED3B2' },
+  variable:   { label: 'Variable',     color: '#A9E2CB' },
   salud:      { label: 'Salud',        color: '#6B7280' },
   otro:       { label: 'Otro',         color: '#0A3625' },
 };
@@ -92,10 +92,11 @@ function defaultState() {
       reserveMonths: 3,
       billingGoal: 120000000,
     },
+    profile: { name: '', nit: '', dv: '', ciiu: '' },
     team: [
-      { id: uid(), name: 'Empleado 1', role: 'Rol', pay: 1500000, projInclude: true },
-      { id: uid(), name: 'Empleado 2', role: 'Rol', pay: 1500000, projInclude: true },
-      { id: uid(), name: 'Empleado 3', role: 'Rol', pay: 1500000, projInclude: true },
+      { id: uid(), name: 'Empleado 1', role: 'Rol', pay: 1500000, projInclude: true, active: true, kind: 'contratista', doc: '' },
+      { id: uid(), name: 'Empleado 2', role: 'Rol', pay: 1500000, projInclude: true, active: true, kind: 'contratista', doc: '' },
+      { id: uid(), name: 'Empleado 3', role: 'Rol', pay: 1500000, projInclude: true, active: true, kind: 'contratista', doc: '' },
     ],
     licenses: [
       { id: uid(), name: 'Canva',            unit: 23000,  currency: 'COP', qty: 1 },
@@ -118,12 +119,17 @@ function defaultState() {
     skandia: {
       total: 30000000, retencionPct: 0.11, weeks: 10, mesCobro: 3,
       phase2On: false, phase2Value: 75000000, phase2Month: 6,
+      received: false, receivedAmount: 0, receivedAt: '',
     },
     liquidity: { cajaEmpresaHoy: 0, ahorrosPersonalesHoy: 0 },
     billing2026: { real: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
     oneOffs: [],
     payments: { months: {} },
     projection: { newClients: [], newHires: [], salaryScenario: 3000000 },
+    // v2
+    ledger: [], docs: [], cuentasCobro: [], pila: [],
+    renta: { years: {} },
+    alerts: { rules: [], dismissed: {} },
   };
 }
 
@@ -138,7 +144,8 @@ function compute(s) {
   const facturacionBruta = sum(clients.map(c => c.gross));
 
   // --- Costos recurrentes
-  const nominaBase = sum(s.team.map(t => t.pay));
+  const teamActive = s.team.filter(t => t.active !== false);
+  const nominaBase = sum(teamActive.map(t => t.pay));
   const nomina = nominaBase * s.global.factorPrestacional;
   const suscripciones = sum(s.licenses.map(l => C(l.unit, l.currency) * (Number(l.qty) || 1)));
   const opex = nomina + suscripciones;
@@ -163,7 +170,7 @@ function compute(s) {
   const sk = s.skandia;
   const skBruto = sk.total;
   const skRet = sk.total * sk.retencionPct;
-  const skNeto = skBruto - skRet;
+  const skNeto = (sk.received && Number(sk.receivedAmount) > 0) ? Number(sk.receivedAmount) : skBruto - skRet;
   const reserva = s.global.reserveMonths * opex;
   const fondoCrecimiento = skNeto - reserva;
 
@@ -215,6 +222,8 @@ function compute(s) {
   base.companyHealth = scoreCompany(base, s);
   base.personalHealth = scorePersonal(base, s);
   base.proj = project(s, base);
+  base.ledger = (typeof ledgerStats === 'function') ? ledgerStats(s) : null;
+  base.alerts = (typeof evalAlerts === 'function') ? evalAlerts(s, base) : [];
   return base;
 }
 
@@ -277,7 +286,7 @@ function project(s, d) {
   const baseNet = d.ingresosNetos;
   const newCl = s.projection.newClients || [];
   const newHires = s.projection.newHires || [];
-  const activeTeamPay = sum(s.team.filter(t => t.projInclude !== false).map(t => t.pay));
+  const activeTeamPay = sum(s.team.filter(t => t.projInclude !== false && t.active !== false).map(t => t.pay));
   const subs = d.suscripciones;
 
   // mes de cobro fuera de 1..12 (o en blanco) no debe hacer desaparecer el capital: lo acotamos
@@ -296,7 +305,7 @@ function project(s, d) {
     const netOp = inflow - outflow;
     cajaE += netOp;
     let capital = 0;
-    if (m === cobroMes) capital += d.skNeto;
+    if (!s.skandia.received && m === cobroMes) capital += d.skNeto; // ya recibido: está en el saldo de hoy
     if (s.skandia.phase2On && m === p2Mes) capital += s.skandia.phase2Value * (1 - s.skandia.retencionPct);
     // ingresos únicos esporádicos aún no recibidos entran en su mes
     oneOffs.forEach(o => { if (!o.received && clamp(Math.round(Number(o.month) || 1), 1, N) === m) capital += (Number(o.amount) || 0); });
@@ -357,7 +366,7 @@ function lineChart(el, { labels, series, fmt = fmtShort, h = 280 }) {
       const area = `M${X(0)},${Y(0)} L` + pts.join(' L') + ` L${X(n - 1)},${Y(0)} Z`;
       paths += `<path d="${area}" fill="${s.color}" opacity="0.10"/>`;
     }
-    paths += `<polyline points="${pts.join(' ')}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? `stroke-dasharray="5 4"` : ''}/>`;
+    paths += `<polyline points="${pts.join(' ')}" pathLength="1" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? `stroke-dasharray="5 4"` : ''}/>`;
     s.data.forEach((v, i) => { paths += `<circle cx="${X(i)}" cy="${Y(v)}" r="2.6" fill="${s.color}"/>`; });
   });
 
@@ -395,11 +404,11 @@ function barChart(el, { labels, values, color = '#004643', fmt = fmtShort, refLi
   values.forEach((v, i) => {
     const y = Y(Math.max(v, 0)), hgt = Math.abs(Y(v) - Y(0));
     const c = colorByValue ? (v >= 0 ? '#2D7D6F' : '#B85C38') : color;
-    bars += `<rect x="${X(i) - bw / 2}" y="${y}" width="${bw}" height="${Math.max(1, hgt)}" rx="4" fill="${c}" data-i="${i}"/>`;
+    bars += `<rect x="${X(i) - bw / 2}" y="${y}" width="${bw}" height="${Math.max(1, hgt)}" rx="4" fill="${c}" data-i="${i}" style="--i:${i}"/>`;
   });
   let xlab = ''; labels.forEach((l, i) => xlab += `<text class="axis-label" x="${X(i)}" y="${H - 8}" text-anchor="middle">${esc(l)}</text>`);
   let ref = '';
-  if (refLine != null) { const y = Y(refLine); ref = `<line x1="${mL}" y1="${y}" x2="${W - mR}" y2="${y}" stroke="#C9883A" stroke-width="2" stroke-dasharray="6 4"/><text class="axis-label" x="${W - mR}" y="${y - 6}" text-anchor="end" fill="#8a5a16" font-weight="800">${esc(refLabel)}</text>`; }
+  if (refLine != null) { const y = Y(refLine); ref = `<line x1="${mL}" y1="${y}" x2="${W - mR}" y2="${y}" stroke="#7ED3B2" stroke-width="2" stroke-dasharray="6 4"/><text class="axis-label" x="${W - mR}" y="${y - 6}" text-anchor="end" fill="#8a5a16" font-weight="800">${esc(refLabel)}</text>`; }
   el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}">${grid}${bars}${ref}${xlab}</svg></div>`;
   el.querySelectorAll('rect[data-i]').forEach(r => {
     r.addEventListener('mousemove', ev => { const i = +r.dataset.i; showTip(`<div class="tt-h">${esc(labels[i])}</div><div class="tt-row"><span>Valor</span><b>${fmt(values[i])}</b></div>`, ev.clientX, ev.clientY); });
@@ -434,7 +443,7 @@ function donut(el, { segments, centerTop = '', centerBot = '' }) {
 // Gauge anillo (devuelve string SVG)
 function gaugeSVG(value) {
   const v = clamp(value, 0, 100), R = 56, C = 2 * Math.PI * R, off = C * (1 - v / 100);
-  const color = v >= 75 ? '#2D7D6F' : v >= 50 ? '#C9883A' : '#B85C38';
+  const color = v >= 75 ? '#2D7D6F' : v >= 50 ? '#C88166' : '#B85C38';
   return `<svg width="132" height="132" viewBox="0 0 132 132">
     <circle cx="66" cy="66" r="${R}" fill="none" stroke="rgba(0,70,67,0.10)" stroke-width="11"/>
     <circle cx="66" cy="66" r="${R}" fill="none" stroke="${color}" stroke-width="11" stroke-linecap="round"
@@ -444,7 +453,7 @@ function gaugeSVG(value) {
 function scoreState(v) {
   if (v >= 80) return { t: 'Sólida', c: 'var(--sage)' };
   if (v >= 60) return { t: 'Estable', c: 'var(--sage)' };
-  if (v >= 40) return { t: 'En vigilancia', c: 'var(--ochre)' };
+  if (v >= 40) return { t: 'En vigilancia', c: 'var(--rust-3, #C88166)' };
   return { t: 'Crítica', c: 'var(--rust)' };
 }
 
@@ -459,7 +468,7 @@ function gaugeBlock(title, score) {
 function dimsList(dims) {
   return dims.map(x => {
     const pct = Math.round(x.pct * 100);
-    const col = x.pct >= 0.75 ? 'var(--sage)' : x.pct >= 0.45 ? 'var(--ochre)' : 'var(--rust)';
+    const col = x.pct >= 0.75 ? 'var(--sage)' : x.pct >= 0.45 ? 'var(--rust-3, #C88166)' : 'var(--rust)';
     return `<div class="dim">
       <div class="dim-h"><span class="dn">${esc(x.name)}</span><span class="dp">${Math.round(x.pts)}/${x.max}</span></div>
       <div class="dim-track"><div class="dim-fill" style="width:${pct}%;background:${col}"></div></div>
@@ -467,9 +476,19 @@ function dimsList(dims) {
     </div>`;
   }).join('');
 }
-const head = (num, title, lead) => `<div class="view-head">
-  <span class="eyebrow"><span class="num">${num}</span> · Nola Labs</span>
-  <h2>${esc(title)}</h2>${lead ? `<p class="lead">${lead}</p>` : ''}</div>`;
+// Cabecera hero de cada vista: número de sección, título en tipografía grande y, opcionalmente,
+// una cifra protagonista (fig) con cifras secundarias. Las cifras "cuentan" al aparecer (motion.js).
+function head(num, title, lead, fig) {
+  const fmtOf = (v, f) => (typeof motionFmt === 'function') ? motionFmt(v, f || 'cop') : fmtCOP(v);
+  let figHTML = '';
+  if (fig) {
+    const side = (fig.side || []).map(x => `<div class="hf-side"><span class="hf-label">${esc(x.label)}</span><span class="hf-num ${x.cls || ''}" data-count="${Number(x.value) || 0}" data-fmt="${x.fmt || 'short'}">${fmtOf(Number(x.value) || 0, x.fmt || 'short')}</span>${x.sub ? `<span class="hf-sub">${esc(x.sub)}</span>` : ''}</div>`).join('');
+    figHTML = `<div class="hero-fig"><div class="hf-main"><span class="hf-label">${esc(fig.label)}</span><span class="hf-value ${fig.cls || ''}" data-count="${Number(fig.value) || 0}" data-fmt="${fig.fmt || 'cop'}">${fmtOf(Number(fig.value) || 0, fig.fmt || 'cop')}</span>${fig.sub ? `<span class="hf-sub">${fig.sub}</span>` : ''}${fig.chips ? `<div class="hf-chips">${fig.chips}</div>` : ''}</div>${side}</div>`;
+  }
+  return `<header class="hero">
+  <span class="eyebrow"><span class="num">${num}</span> · Nola Labs•</span>
+  <h2 class="hero-title">${esc(title)}</h2>${lead ? `<p class="lead">${lead}</p>` : ''}${figHTML}</header>`;
+}
 
 /* ========================================================= VISTAS */
 function renderResumen() {
@@ -487,7 +506,20 @@ function renderResumen() {
     : `<span class="chip chip--warn"><span class="cdot"></span>Déficit</span>`;
 
   const el = $('#view-resumen');
-  el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: cuánta plata hay en cada cuenta, cómo se mueve mes a mes, y los números que mueven tus decisiones. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.') + `
+  const lg = d.ledger, ymNow = currentYM();
+  const realMes = lg ? lg.cur.empresa.ing - lg.cur.empresa.egr : 0;
+  const nAlerts = (typeof activeAlerts === 'function') ? activeAlerts().length : 0;
+  el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: cuánta plata hay en cada cuenta, cómo se mueve mes a mes, y los números que mueven tus decisiones. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.', {
+    label: 'Cuenta empresa · saldo hoy', value: d.cajaEmpresa, fmt: 'cop', cls: d.cajaEmpresa < 0 ? 'neg' : '',
+    sub: `Reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses de operación · flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes`,
+    chips: empChip + ' ' + selfChip,
+    side: [
+      { label: 'Cuenta personal · hoy', value: d.ahorros, fmt: 'short', cls: d.ahorros < 0 ? 'neg' : '', sub: d.deficit > 0 ? `déficit ${fmtShort(d.deficit)}/mes · ${d.ahorros > 0 ? 'runway ' + fmtMonths(d.runwayMonths) : 'sin ahorros que lo cubran'}` : 'sin déficit mensual' },
+      { label: `Resultado real · ${ymLabel(ymNow)}`, value: realMes, fmt: 'short', cls: realMes >= 0 ? 'pos' : 'neg', sub: lg ? `ingresos ${fmtShort(lg.cur.empresa.ing)} · egresos ${fmtShort(lg.cur.empresa.egr)}` : '' },
+      { label: 'Por cobrar', value: lg ? lg.pendingIn : 0, fmt: 'short', sub: lg && lg.pendingInN ? `${lg.pendingInN} pendiente${lg.pendingInN > 1 ? 's' : ''}` : 'nada pendiente' },
+      { label: 'Alertas activas', value: nAlerts, fmt: 'int', cls: nAlerts ? 'neg' : 'pos', sub: nAlerts ? 'revisalas abajo' : 'todo en orden' },
+    ],
+  }) + (typeof alertStripHTML === 'function' ? alertStripHTML() : '') + `
   <div class="eyebrow" style="margin-bottom:12px">Tus dos cuentas</div>
   <div class="grid g-2">
     <div class="card kpi--dark kpi">
@@ -522,7 +554,7 @@ function renderResumen() {
     <div class="card kpi--dark kpi">
       <span class="klabel">Fondo de crecimiento</span>
       <span class="kval">${fmtCOP(d.fondoCrecimiento)}</span>
-      <span class="ksub">Capital tras reserva. Aún no recibido</span>
+      <span class="ksub">${s.skandia.received ? `Capital tras reserva · recibido${s.skandia.receivedAt ? ' el ' + s.skandia.receivedAt : ''}, ya en tu saldo` : 'Capital tras reserva. Aún no recibido'}</span>
     </div>
   </div>
 
@@ -563,7 +595,7 @@ function statusCallouts(d) {
     out.push(`<div class="callout callout--warn span-2"><span class="ci">!</span><div class="ct"><b>La operación aún no cubre tu salario.</b> Faltan ${fmtCOP(d.breakEvenCEO - d.ingresosNetos)} de ingreso neto recurrente para sostener ${fmtShort(d.ceoSalary)}/mes.</div></div>`);
   }
   if (d.deficit > 0) {
-    out.push(`<div class="callout callout--ochre"><span class="ci">⏱</span><div class="ct"><b>El reloj.</b> Tu salario sostenible no cubre tu vida: déficit de ${fmtCOP(d.deficit)}/mes. A ese ritmo tus ahorros duran ${fmtMonths(d.runwayMonths)}.</div></div>`);
+    out.push(`<div class="callout callout--jade"><span class="ci">⏱</span><div class="ct"><b>El reloj.</b> Tu salario sostenible no cubre tu vida: déficit de ${fmtCOP(d.deficit)}/mes. A ese ritmo tus ahorros duran ${fmtMonths(d.runwayMonths)}.</div></div>`);
   } else {
     out.push(`<div class="callout callout--ok"><span class="ci">✓</span><div class="ct"><b>Tu vida está cubierta.</b> Tu ingreso personal supera tus gastos. Sin reloj corriendo.</div></div>`);
   }
@@ -603,7 +635,7 @@ function renderEmpresa() {
     <td class="r tabnum">${fmtPct(d.ingresosNetos ? c.net / d.ingresosNetos : 0)}</td>
   </tr>`).join('');
   const costRows = [
-    ...s.team.map(t => ({ n: `${t.name} · ${t.role}`, v: t.pay * s.global.factorPrestacional })),
+    ...s.team.filter(t => t.active !== false).map(t => ({ n: `${t.name} · ${t.role}`, v: t.pay * s.global.factorPrestacional })),
     { n: `Suscripciones (${s.licenses.length})`, v: d.suscripciones },
   ].map(x => `<tr><td>${esc(x.n)}</td><td class="r tabnum">${fmtCOP(x.v)}</td><td class="r tabnum">${fmtPct(d.ingresosNetos ? x.v / d.ingresosNetos : 0)}</td></tr>`).join('');
 
@@ -633,7 +665,7 @@ function renderEmpresa() {
   <div class="grid g-12 mt-16">
     <div class="card"><div class="card-h"><h3>Punto de equilibrio</h3><span class="eyebrow">Break-even</span></div>
       <div id="chart-be"></div>
-      <div class="legend"><div class="li"><span class="sw" style="background:#004643"></span>Tus ingresos netos</div><div class="li"><span class="sw" style="background:#C9883A"></span>Equilibrio (con tu salario)</div></div>
+      <div class="legend"><div class="li"><span class="sw" style="background:#004643"></span>Tus ingresos netos</div><div class="li"><span class="sw" style="background:#7ED3B2"></span>Equilibrio (con tu salario)</div></div>
       <div class="grid g-2 mt-16">
         <div class="insight"><div class="il">Equilibrio sin tu salario</div><div class="iv">${fmtShort(d.breakEvenNoCEO)}</div><div class="id">Para cubrir solo la operación</div></div>
         <div class="insight"><div class="il">Equilibrio con tu salario</div><div class="iv">${fmtShort(d.breakEvenCEO)}</div><div class="id">${d.avgNet ? `${d.clientsToBE.toFixed(1)} clientes promedio (${fmtShort(d.avgNet)} c/u)` : 'sin clientes de referencia para estimar'}</div></div>
@@ -659,9 +691,9 @@ function renderEmpresa() {
   barChart($('#chart-be'), { labels: ['Ingresos netos'], values: [d.ingresosNetos], color: '#004643', refLine: d.breakEvenCEO, refLabel: 'Equilibrio', fmt: fmtShort, h: 200 });
   donut($('#chart-cost'), { segments: [
     { label: 'Nómina equipo', value: d.nomina, color: '#004643' },
-    { label: 'Herramientas', value: d.suscripciones, color: '#C9883A' },
+    { label: 'Herramientas', value: d.suscripciones, color: '#7ED3B2' },
     { label: 'Tu salario', value: d.ceoSalary, color: '#2D7D6F' },
-    { label: 'Excedente', value: Math.max(0, d.resultOperativo), color: '#DFB37E' },
+    { label: 'Excedente', value: Math.max(0, d.resultOperativo), color: '#DCEFE7' },
   ], centerTop: fmtPct(d.margen), centerBot: 'margen' });
   barChart($('#chart-fact'), { labels: MONTHS2026, values: s.billing2026.real, color: '#2D7D6F', refLine: s.global.billingGoal / 12, refLabel: 'Meta/mes', fmt: fmtShort, h: 240 });
 }
@@ -705,7 +737,7 @@ function renderPersonal() {
     </div>
   </div>
 
-  <div class="callout callout--ochre mt-16"><span class="ci">◎</span><div class="ct"><b>Para que tu salario cubra tu vida</b> debe subir de ${fmtShort(d.ceoSalary)} a <b>${fmtShort(d.salaryToCoverLife)}</b>/mes. Para que la empresa lo aguante sin perder el equilibrio, el ingreso recurrente neto debe crecer <b>${fmtCOP(d.recurringNetGrowthNeeded)}/mes</b> — un cliente tamaño F&M, o un producto de ingreso recurrente.</div></div>`;
+  <div class="callout callout--jade mt-16"><span class="ci">◎</span><div class="ct"><b>Para que tu salario cubra tu vida</b> debe subir de ${fmtShort(d.ceoSalary)} a <b>${fmtShort(d.salaryToCoverLife)}</b>/mes. Para que la empresa lo aguante sin perder el equilibrio, el ingreso recurrente neto debe crecer <b>${fmtCOP(d.recurringNetGrowthNeeded)}/mes</b> — un cliente tamaño F&M, o un producto de ingreso recurrente.</div></div>`;
 
   donut($('#chart-pers'), { segments: segs, centerTop: fmtShort(d.gastosPersonales), centerBot: '/ mes' });
 }
@@ -776,7 +808,7 @@ function renderProyecciones() {
   const newClientRows = (s.projection.newClients || []).map(c => `<div class="switchrow" data-cid="${c.id}">
     <div><div class="sn">${esc(c.name || 'Cliente nuevo')}</div><div class="sm">${fmtShort(c.net)} neto · desde mes ${c.startMonth}</div></div>
     <button class="iconbtn" data-delclient="${c.id}">✕</button></div>`).join('') || `<p class="hint">Sin clientes nuevos en el escenario. Agregá uno para ver el efecto.</p>`;
-  const teamToggles = s.team.map(t => `<label class="toggle" style="display:flex;justify-content:space-between;width:100%;margin:6px 0">
+  const teamToggles = s.team.filter(t => t.active !== false).map(t => `<label class="toggle" style="display:flex;justify-content:space-between;width:100%;margin:6px 0">
     <span class="tl">${esc(t.name)} · ${fmtShort(t.pay)}</span>
     <span style="display:flex;align-items:center"><input type="checkbox" data-projinc="${t.id}" ${t.projInclude !== false ? 'checked' : ''}><span class="tr"></span></span></label>`).join('');
 
@@ -834,8 +866,8 @@ function paymentItemsFor(s, ym) {
   const M = parseInt(ym.slice(5), 10);
   const trm = s.global.trm;
   const items = [];
-  s.team.forEach(t => items.push({ key: 'team:' + t.id, side: 'empresa', name: 'Nómina · ' + t.name, detail: t.role || '', amount: Number(t.pay) || 0, editable: { list: 'team', id: t.id, field: 'pay' } }));
-  const extraPrest = (s.global.factorPrestacional - 1) * sum(s.team.map(t => t.pay));
+  s.team.filter(t => t.active !== false).forEach(t => items.push({ key: 'team:' + t.id, side: 'empresa', name: 'Nómina · ' + t.name, detail: t.role || '', amount: Number(t.pay) || 0, editable: { list: 'team', id: t.id, field: 'pay' } }));
+  const extraPrest = (s.global.factorPrestacional - 1) * sum(s.team.filter(t => t.active !== false).map(t => t.pay));
   if (extraPrest > 0.5) items.push({ key: 'prest', side: 'empresa', name: 'Cargas prestacionales del equipo', detail: 'factor ' + s.global.factorPrestacional, amount: extraPrest, editable: null });
   s.licenses.forEach(l => {
     const qty = Number(l.qty) || 1;
@@ -899,6 +931,8 @@ function togglePayment(ym, key) {
       applyPayEffect(it ? it.side : sideForKey(key), Number(paid[key].amount) || 0, -1);
     }
     delete paid[key];
+    if (typeof ledgerSyncPayment === 'function') ledgerSyncPayment(ym, key, null, false);
+    if (typeof ccSyncFromPayment === 'function') ccSyncFromPayment(ym, key, false);
     if (!Object.keys(paid).length) delete months[ym]; // no dejar meses vacíos fantasma
   } else {
     const it = paymentItemsFor(S, ym).find(x => x.key === key);
@@ -907,6 +941,8 @@ function togglePayment(ym, key) {
     // solo el MES ACTUAL mueve saldos; meses pasados/futuros son registro histórico
     months[ym].paid[key] = { amount: it.amount, at: Date.now(), applied: isCurrent };
     if (isCurrent) applyPayEffect(it.side, it.amount, +1);
+    if (typeof ledgerSyncPayment === 'function') ledgerSyncPayment(ym, key, it, true);
+    if (typeof ccSyncFromPayment === 'function') ccSyncFromPayment(ym, key, true);
     else toast('Registro histórico: no toca los saldos de hoy', '');
   }
   D = compute(S); S.meta.updatedAt = Date.now(); saveLocal(); queueCloudSave(); updateHeader();
@@ -1063,6 +1099,22 @@ function renderEditor() {
       ${repeatField('Duración (semanas)', s.skandia.weeks, 'skandia.weeks')}
       ${repeatField('Mes de cobro (1=jun-26 … 12=may-27)', s.skandia.mesCobro, 'skandia.mesCobro', { min: 1, max: 12 })}
     </div>
+    <div class="grid g-4 mt-16">
+      <div class="field-inline"><label>Estado del cobro</label><label class="toggle" style="margin-top:8px"><input type="checkbox" data-editbool="skandia.received" ${s.skandia.received ? 'checked' : ''}><span class="tr"></span><span class="tl">${s.skandia.received ? 'Ya recibido (está en tu saldo)' : 'Aún no recibido'}</span></label></div>
+      ${repeatField('Neto recibido (real)', s.skandia.receivedAmount || 0, 'skandia.receivedAmount')}
+      ${repeatField('Fecha de recibido', s.skandia.receivedAt || '', 'skandia.receivedAt', { type: 'date' })}
+    </div>
+    <div class="hint">Cuando marcás el cobro como recibido, la proyección deja de sumarlo como capital futuro (ya está en el saldo de hoy) y el "fondo de crecimiento" usa el neto real.</div>
+  </div>
+
+  <div class="editor-sec card"><div class="card-h"><h3>Tu perfil tributario</h3><span class="eyebrow">Renta · PILA</span></div>
+    <div class="grid g-4">
+      ${repeatField('Nombre', s.profile.name || '', 'profile.name', { type: 'text' })}
+      ${repeatField('NIT / cédula', s.profile.nit || '', 'profile.nit', { type: 'text' })}
+      ${repeatField('Dígito de verificación', s.profile.dv || '', 'profile.dv', { type: 'text' })}
+      ${repeatField('Actividad económica (CIIU)', s.profile.ciiu || '', 'profile.ciiu', { type: 'text' })}
+    </div>
+    <div class="hint">Los dos últimos dígitos del NIT definen tu fecha límite de renta en el calendario DIAN y el día de pago de la PILA. Se guarda solo en tu nube.</div>
   </div>
 
   <div class="editor-sec card"><div class="card-h"><h3>Ingresos únicos · esporádicos · ${(s.oneOffs || []).length}</h3><span class="eyebrow">Proyectos puntuales</span></div>
@@ -1083,11 +1135,14 @@ function renderEditor() {
   </div>`;
 
   // dynamic lists
-  $('#ed-team').innerHTML = s.team.map(t => `<div class="repeat-row" style="grid-template-columns:1.4fr 1.4fr 1fr auto" data-row="team" data-id="${t.id}">
+  $('#ed-team').innerHTML = s.team.map(t => `<div class="repeat-row" style="grid-template-columns:1.3fr 1.2fr .9fr .9fr .8fr .7fr auto${t.active === false ? ';opacity:.6' : ''}" data-row="team" data-id="${t.id}">
     ${repeatField('Nombre', t.name, '', { type: 'text' }).replace('data-edit=""', `data-list="team" data-id="${t.id}" data-field="name"`)}
     ${repeatField('Rol', t.role, '', { type: 'text' }).replace('data-edit=""', `data-list="team" data-id="${t.id}" data-field="role"`)}
     ${repeatField('Pago mensual', t.pay, '').replace('data-edit=""', `data-list="team" data-id="${t.id}" data-field="pay"`)}
-    <button class="iconbtn" data-del="team" data-id="${t.id}" title="Quitar">✕</button></div>`).join('');
+    ${repeatField('Documento', t.doc || '', '', { type: 'text' }).replace('data-edit=""', `data-list="team" data-id="${t.id}" data-field="doc"`)}
+    <div class="field-inline"><label>Vínculo</label><select data-list="team" data-id="${t.id}" data-field="kind"><option value="contratista" ${t.kind !== 'empleado' ? 'selected' : ''}>Contratista</option><option value="empleado" ${t.kind === 'empleado' ? 'selected' : ''}>Empleado</option></select></div>
+    <div class="field-inline"><label>Activo</label><select data-list="team" data-id="${t.id}" data-field="active"><option value="si" ${t.active !== false ? 'selected' : ''}>Sí</option><option value="no" ${t.active === false ? 'selected' : ''}>No</option></select></div>
+    <button class="iconbtn" data-del="team" data-id="${t.id}" title="Eliminar del todo (mejor: marcar inactivo para conservar su historial)">✕</button></div>`).join('');
 
   $('#ed-lic').innerHTML = s.licenses.map(l => `<div class="repeat-row" style="grid-template-columns:1.6fr 1fr .8fr .8fr auto" data-row="licenses" data-id="${l.id}">
     ${repeatField('Nombre', l.name, '', { type: 'text' }).replace('data-edit=""', `data-list="licenses" data-id="${l.id}" data-field="name"`)}
@@ -1178,30 +1233,38 @@ let S = null, D = null, current = 'resumen';
 const VIEWS = { resumen: renderResumen, empresa: renderEmpresa, personal: renderPersonal, pagos: renderPagos, salud: renderSalud, proyecciones: renderProyecciones, editor: renderEditor, ajustes: renderAjustes };
 
 let chartTimer = null;
+// Pinta una vista y aplica los motion cues (reveal escalonado, cifras que cuentan, badge de alertas)
+function paint(view, animate = false) {
+  (VIEWS[view] || renderResumen)();
+  const el = $('#view-' + view);
+  if (typeof viewMotion === 'function') viewMotion(el, animate);
+  if (typeof cardSpotlight === 'function') cardSpotlight(el);
+  if (typeof updateAlertBadge === 'function') updateAlertBadge();
+}
 function re(opts = {}) {
   D = compute(S);
   S.meta.updatedAt = Date.now();
   saveLocal();
   if (!opts.noCloud) queueCloudSave();
   updateHeader();
-  if (!opts.keepEditor || current !== 'editor') {
-    (VIEWS[current] || renderResumen)();
-  }
+  if (!opts.keepEditor || current !== 'editor') paint(current);
 }
 function go(view) {
+  if (!VIEWS[view]) view = 'resumen';
   current = view;
   if (view === 'pagos') payMonth = currentYM(); // siempre aterrizar en el mes actual al navegar
-
-  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  $$('.fnav-item[data-view], .fmenu-item[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   $$('.view').forEach(v => v.classList.remove('active'));
   $('#view-' + view).classList.add('active');
-  (VIEWS[view] || renderResumen)();
-  closeSidebar();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  paint(view, true);
+  closeMenu();
+  if (typeof navIndicator === 'function') navIndicator();
+  window.scrollTo({ top: 0, behavior: (typeof MOTION !== 'undefined' && MOTION.reduce) ? 'auto' : 'smooth' });
 }
 function updateHeader() {
   const t = S.meta.updatedAt ? new Date(S.meta.updatedAt) : null;
   $('#saveLabel').textContent = t ? 'Guardado ' + t.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '';
+  const fm = $('#footMeta'); if (fm) { const p = S.profile || {}; fm.textContent = [p.name, p.nit ? 'NIT ' + p.nit + (p.dv ? '-' + p.dv : '') : '', p.ciiu ? 'CIIU ' + p.ciiu : '', 'Pesos colombianos (COP)'].filter(Boolean).join(' · '); }
 }
 
 /* ========================================================= BINDINGS */
@@ -1238,7 +1301,7 @@ function bindEditor() {
       if (!item) return;
       const f = inp.dataset.field;
       if (inp.type === 'checkbox') item[f] = inp.checked;
-      else if (f === 'received') item[f] = (inp.value === 'si');
+      else if (f === 'received' || f === 'active') item[f] = (inp.value === 'si');
       else if (f === 'month' || f === 'dueMonth') item[f] = parseInt(inp.value, 10) || 1;
       else item[f] = (inp.type === 'number') ? (parseFloat(inp.value) || 0) : inp.value;
       // al volver un gasto trimestral/anual, anclar su mes de cobro ya mismo (canónico antes de subir)
@@ -1246,6 +1309,8 @@ function bindEditor() {
       reEditor();
     });
   });
+  // booleanos por checkbox
+  el.querySelectorAll('[data-editbool]').forEach(c => c.addEventListener('change', () => { setPath(S, c.dataset.editbool, c.checked); renderEditor(); re(); }));
   // billing
   el.querySelectorAll('[data-bill]').forEach(inp => inp.addEventListener('input', () => {
     S.billing2026.real[+inp.dataset.bill] = parseFloat(inp.value) || 0; reEditor();
@@ -1272,7 +1337,7 @@ function reEditor() { D = compute(S); S.meta.updatedAt = Date.now(); saveLocal()
 
 function addItem(list) {
   const m = {
-    team: { id: uid(), name: 'Nueva persona', role: 'Rol', pay: 1000000, projInclude: true },
+    team: { id: uid(), name: 'Nueva persona', role: 'Rol', pay: 1000000, projInclude: true, active: true, kind: 'contratista', doc: '' },
     licenses: { id: uid(), name: 'Nueva licencia', unit: 50000, currency: 'COP', qty: 1 },
     clients: { id: uid(), name: 'Nuevo cliente', gross: 3500000, net: 3000000, recurring: true },
     personalIncome: { id: uid(), name: 'Nuevo ingreso', amount: 0, currency: 'COP' },
@@ -1350,7 +1415,23 @@ function migrate(st) {
     if (!Array.isArray(st.projection[k])) st.projection[k] = [];
     else { st.projection[k] = st.projection[k].filter(x => x && typeof x === 'object'); st.projection[k].forEach(x => { if (x.id == null) x.id = uid(); }); }
   });
-  st.team.forEach(t => { if (t.projInclude === undefined) t.projInclude = true; });
+  st.team.forEach(t => { if (t.projInclude === undefined) t.projInclude = true; if (t.active === undefined) t.active = true; if (!t.kind) t.kind = 'contratista'; if (t.doc == null) t.doc = ''; });
+  // ---- v2: perfil, capital recibido, libro, documentos, cuentas de cobro, PILA, renta, alertas
+  st.profile = Object.assign({}, def.profile, (st.profile && typeof st.profile === 'object') ? st.profile : {});
+  if (st.skandia.received === undefined) st.skandia.received = false;
+  st.skandia.receivedAmount = Number(st.skandia.receivedAmount) || 0;
+  ['ledger', 'docs', 'cuentasCobro', 'pila'].forEach(k => {
+    if (!Array.isArray(st[k])) st[k] = [];
+    st[k] = st[k].filter(x => x && typeof x === 'object');
+    st[k].forEach(x => { if (x.id == null) x.id = uid(); });
+  });
+  if (!st.renta || typeof st.renta !== 'object' || Array.isArray(st.renta)) st.renta = { years: {} };
+  if (!st.renta.years || typeof st.renta.years !== 'object') st.renta.years = {};
+  if (!st.alerts || typeof st.alerts !== 'object' || Array.isArray(st.alerts)) st.alerts = { rules: [], dismissed: {} };
+  if (!Array.isArray(st.alerts.rules)) st.alerts.rules = [];
+  st.alerts.rules = st.alerts.rules.filter(r => r && typeof r === 'object' && r.type);
+  if (!st.alerts.dismissed || typeof st.alerts.dismissed !== 'object') st.alerts.dismissed = {};
+  if (typeof migrateModules === 'function') { try { st = migrateModules(st); } catch (e) { console.warn('migrateModules', e); } }
   return st;
 }
 
@@ -1436,7 +1517,7 @@ function applyRemoteState(data, stamp) {
     clearTimeout(cloud.saveTimer); cloud.saveTimer = null;
     S = next; D = compute(S); saveLocal(); updateHeader();
     if (stamp) cloud.lastStamp = stamp;
-    if (!isTypingNow()) (VIEWS[current] || renderResumen)();
+    if (!isTypingNow()) paint(current);
   } catch (e) { console.warn('applyRemote', e); }
   finally { cloud.applying = false; }
 }
@@ -1618,14 +1699,23 @@ async function bootLock() {
 }
 
 /* ========================================================= EVENTOS GLOBALES */
-function openSidebar() { $('#sidebar').classList.add('open'); $('#scrim').classList.add('show'); }
-function closeSidebar() { $('#sidebar').classList.remove('open'); $('#scrim').classList.remove('show'); }
+// Menú secundario del dock flotante
+function openMenu() { const m = $('#fmenu'); if (!m) return; m.hidden = false; $('#scrim').classList.add('show'); const b = $('#fnavMore'); if (b) { b.classList.add('open'); b.setAttribute('aria-expanded', 'true'); } }
+function closeMenu() { const m = $('#fmenu'); if (m) m.hidden = true; const sc = $('#scrim'); if (sc) sc.classList.remove('show'); const b = $('#fnavMore'); if (b) { b.classList.remove('open'); b.setAttribute('aria-expanded', 'false'); } }
+function toggleMenu() { const m = $('#fmenu'); if (!m) return; if (m.hidden) openMenu(); else closeMenu(); }
 
 function initShell() {
-  $('#nav').addEventListener('click', e => { const b = e.target.closest('.nav-item'); if (b) go(b.dataset.view); });
-  document.addEventListener('click', e => { const g = e.target.closest('[data-go]'); if (g) go(g.dataset.go); });
-  $('#menuBtn').addEventListener('click', openSidebar);
-  $('#scrim').addEventListener('click', closeSidebar);
+  document.addEventListener('click', e => {
+    const nb = e.target.closest('.fnav-item[data-view], .fmenu-item[data-view]');
+    if (nb) { e.preventDefault(); go(nb.dataset.view); return; }
+    const g = e.target.closest('[data-go]');
+    if (g) { e.preventDefault(); go(g.dataset.go); }
+  });
+  const more = $('#fnavMore'); if (more) more.addEventListener('click', e => { e.stopPropagation(); toggleMenu(); });
+  $('#scrim').addEventListener('click', closeMenu);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+  window.addEventListener('resize', () => { if (typeof navIndicator === 'function') navIndicator(); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (typeof navIndicator === 'function') navIndicator(); });
   $('#logoutBtn').addEventListener('click', async () => {
     if (cloud.client && cloud.user) { await cloud.client.auth.signOut(); location.reload(); }
     else { location.reload(); }
