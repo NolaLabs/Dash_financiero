@@ -512,7 +512,7 @@ function renderResumen() {
   const lg = d.ledger, ymNow = currentYM();
   const realMes = lg ? lg.cur.empresa.ing - lg.cur.empresa.egr : 0;
   const nAlerts = (typeof activeAlerts === 'function') ? activeAlerts().length : 0;
-  el.innerHTML = head('01', 'Resumen', 'Una sola lectura de tu salud financiera: cuánta plata hay en cada cuenta, cómo se mueve mes a mes, y los números que mueven tus decisiones. Editá cualquier dato en <b>Datos · Editar</b> y todo recalcula en vivo.', {
+  el.innerHTML = head('01', 'Resumen', 'Cuánta plata hay, qué se mueve este mes y qué necesita tu atención.', {
     label: 'Cuenta empresa · saldo hoy', value: d.cajaEmpresa, fmt: 'cop', cls: d.cajaEmpresa < 0 ? 'neg' : '',
     sub: `Reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses de operación · flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes${(() => { const accs = (s.bank && s.bank.accounts) || {}; const k = Object.keys(accs).filter(a => accs[a].side === 'empresa' && accs[a].reconciledTo).sort((a, b) => accs[b].reconciledTo.localeCompare(accs[a].reconciledTo))[0]; return k ? ' · conciliado con el banco al ' + fmtDate(accs[k].reconciledTo) : ' · saldo sin conciliar con el banco'; })()}`,
     chips: empChip + ' ' + selfChip,
@@ -520,24 +520,9 @@ function renderResumen() {
       { label: 'Cuenta personal · hoy', value: d.ahorros, fmt: 'short', cls: d.ahorros < 0 ? 'neg' : '', sub: (() => { const accs = (s.bank && s.bank.accounts) || {}; const k = Object.keys(accs).filter(a => accs[a].side === 'personal' && accs[a].reconciledTo).sort((a, b) => accs[b].reconciledTo.localeCompare(accs[a].reconciledTo))[0]; const rec = k ? 'extracto al ' + fmtDate(accs[k].reconciledTo) + ': ' + fmtShort(accs[k].balance) + ' · ' : ''; return rec + (d.deficit > 0 ? `déficit ${fmtShort(d.deficit)}/mes` : 'sin déficit mensual'); })() },
       { label: `Resultado real · ${ymLabel(ymNow)}`, value: realMes, fmt: 'short', cls: realMes >= 0 ? 'pos' : 'neg', sub: lg ? `ingresos ${fmtShort(lg.cur.empresa.ing)} · egresos ${fmtShort(lg.cur.empresa.egr)}` : '' },
       { label: 'Por cobrar', value: lg ? lg.pendingIn : 0, fmt: 'short', sub: lg && lg.pendingInN ? `${lg.pendingInN} pendiente${lg.pendingInN > 1 ? 's' : ''}` : 'nada pendiente' },
-      { label: 'Alertas activas', value: nAlerts, fmt: 'int', cls: nAlerts ? 'neg' : 'pos', sub: nAlerts ? 'revisalas abajo' : 'todo en orden' },
     ],
   }) + (typeof alertStripHTML === 'function' ? alertStripHTML() : '') + `
-  <div class="eyebrow" style="margin-bottom:12px">Tus dos cuentas</div>
-  <div class="grid g-2">
-    <div class="card kpi--dark kpi">
-      <span class="klabel">Cuenta Empresa · saldo hoy</span>
-      <span class="kval">${fmtCOP(d.cajaEmpresa)}</span>
-      <span class="ksub">Flujo recurrente ${d.resultOperativo >= 0 ? '+' : ''}${fmtShort(d.resultOperativo)}/mes · reserva ${monthsRes.toFixed(1)} de ${s.global.reserveMonths} meses ${empChip}</span>
-    </div>
-    <div class="card kpi">
-      <span class="klabel">Cuenta Personal · saldo hoy</span>
-      <span class="kval">${fmtCOP(d.ahorros)}</span>
-      <span class="ksub">Flujo ${d.resultPersonal >= 0 ? '+' : ''}${fmtShort(d.resultPersonal)}/mes · runway ${d.deficit > 0 ? fmtMonths(d.runwayMonths) : '∞'} ${persChip}</span>
-    </div>
-  </div>
-
-  <div class="eyebrow" style="margin:22px 0 12px">Indicadores clave</div>
+  <div class="eyebrow" style="margin-bottom:12px">Indicadores clave</div>
   <div class="grid g-4">
     <div class="card kpi">
       <span class="klabel">Ingresos netos / mes</span>
@@ -644,7 +629,7 @@ function renderEmpresa() {
 
   const beChip = d.selfFinances ? `<span class="chip chip--ok"><span class="cdot"></span>Por encima del equilibrio</span>` : `<span class="chip chip--warn"><span class="cdot"></span>Por debajo</span>`;
 
-  el.innerHTML = head('02', 'Empresa', 'P&L recurrente mes a mes, sin el proyecto único. Tu punto de equilibrio y el avance hacia la meta de facturación.') + `
+  el.innerHTML = head('04', 'Empresa', 'Ingresos, costos y punto de equilibrio del negocio, mes a mes.') + `
   <div class="grid g-4">
     <div class="card kpi"><span class="klabel">Ingresos netos / mes</span><span class="kval">${fmtCOP(d.ingresosNetos)}</span><span class="ksub">${d.nClients} clientes recurrentes</span></div>
     <div class="card kpi"><span class="klabel">Costos operativos</span><span class="kval">${fmtCOP(d.opex)}</span><span class="ksub">Equipo ${fmtShort(d.nomina)} + herramientas ${fmtShort(d.suscripciones)}</span></div>
@@ -727,7 +712,7 @@ function renderPersonal() {
   ].join('');
   const segs = Object.keys(d.catTotals).filter(k => d.catTotals[k] > 0).map(k => ({ label: CATS[k].label, value: d.catTotals[k], color: CATS[k].color }));
 
-  el.innerHTML = head('03', 'Personal', 'Tu presupuesto personal con dos columnas: lo que gastás de verdad (promedio de los extractos) y la meta por rubro. Los rubros fijos se marcan en Pagos del mes; los variables se miden contra el extracto cuando lo importás.', {
+  el.innerHTML = head('05', 'Personal', 'Lo que gastás de verdad frente a la meta de cada rubro.', {
     label: 'Gasto personal real · promedio mensual', value: d.gastosPersonales, fmt: 'cop', cls: d.gastosPersonales > d.ingresosPersonales ? 'neg' : '',
     sub: `Meta ${fmtCOP(d.metaPersonal)} · ${d.gastosPersonales > d.metaPersonal ? 'estás ' + fmtShort(d.gastosPersonales - d.metaPersonal) + ' por encima de la meta cada mes' : 'dentro de la meta'}`,
     side: [
@@ -762,7 +747,7 @@ function renderPersonal() {
 function renderSalud() {
   const d = D;
   const el = $('#view-salud');
-  el.innerHTML = head('05', 'Salud financiera', 'Tu scoring de salud — empresa y bolsillo — calculado sobre 5 dimensiones cada uno. Cada gasto o cliente que edités mueve la aguja en vivo. Así sabés cómo estás con cada decisión.') + `
+  el.innerHTML = head('10', 'Salud financiera', 'Cinco dimensiones para la empresa y cinco para tu bolsillo, en un solo puntaje.') + `
   <div class="grid g-2">
     <div class="card pad-lg"><div class="card-h"><span class="eyebrow">Empresa</span></div>
       ${gaugeBlock('Nola Labs', d.companyHealth.score)}
@@ -829,7 +814,7 @@ function renderProyecciones() {
     <span class="tl">${esc(t.name)} · ${fmtShort(t.pay)}</span>
     <span style="display:flex;align-items:center"><input type="checkbox" data-projinc="${t.id}" ${t.projInclude !== false ? 'checked' : ''}><span class="tr"></span></span></label>`).join('');
 
-  el.innerHTML = head('06', 'Proyecciones', 'Mové las palancas y mirá cómo cambian tu caja y tu runway a 12 meses. Crecer clientes, prender el proyecto Fase 2, subir tu salario, contratar o soltar gente.') + `
+  el.innerHTML = head('11', 'Proyecciones', 'Mové las palancas y mirá tu caja y tu runway a 12 meses.') + `
   <div class="grid g-21">
     <div class="card"><div class="card-h"><h3>Palancas</h3><span class="eyebrow">Escenario</span></div>
 
@@ -995,7 +980,7 @@ function renderPagos() {
   const t = paySummaryData(items);
   const isHist = payMonth !== cur;
   const opts = known.map(k => `<option value="${esc(k)}" ${k === payMonth ? 'selected' : ''}>${ymLabel(k)}${k === cur ? ' · actual' : ''}</option>`).join('');
-  el.innerHTML = head('04', 'Pagos del mes', 'Los pagos que debés hacer este mes, derivados de tus datos reales (nómina, licencias, tu salario y tus gastos). Marcá cada uno cuando lo hagas: se descuenta del saldo de la cuenta que corresponde. Editar un monto acá también lo cambia en <b>Datos · Editar</b>.') + `
+  el.innerHTML = head('02', 'Pagos del mes', 'Lo que te toca pagar este mes. Marcá cada pago cuando lo hagas.') + `
   <div class="card pad-lg">
     <div class="card-h"><h3>${esc(ymLabel(payMonth))}</h3><select id="payMonthSel" style="width:auto">${opts}</select></div>
     <div class="flex between center wrap gap-8" style="margin-bottom:10px">

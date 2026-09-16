@@ -634,7 +634,7 @@ function renderMovimientos() {
   const acc = mvAcc === 'todas' ? 'todas' : mvAcc;
   const ledgerGross2026 = {}; (s.ledger || []).filter(m => m.status === 'hecho' && m.type === 'ingreso' && m.account === 'empresa' && m.category !== 'capital' && (m.date || '').slice(0, 4) === '2026').forEach(m => { const i = +m.date.slice(5, 7) - 1; ledgerGross2026[i] = (ledgerGross2026[i] || 0) + m.gross; });
 
-  el.innerHTML = head('05', 'Movimientos', 'El libro real de ingresos y egresos de tus dos cuentas. Cada cobro, cada pago y cada comprobante en un solo lugar; de acá salen la rentabilidad real del negocio y los soportes de tu declaración de renta.', {
+  el.innerHTML = head('03', 'Movimientos', 'El libro real de tus dos cuentas: cada cobro, cada pago y su soporte.', {
     label: `Resultado real · ${ymLabel(ym)} · ${ACC_LABEL[mvAcc]}`, value: net, fmt: 'cop', cls: net < 0 ? 'neg' : '',
     sub: `Ingresos ${fmtCOP(cur.ing)} − egresos ${fmtCOP(cur.egr)} en lo que va del mes${st.pendingIn ? ` · ${fmtCOP(st.pendingIn)} por cobrar` : ''}`,
     side: [
@@ -762,7 +762,7 @@ function renderEquipo() {
   const paidYTD = sum((s.ledger || []).filter(m => m.status === 'hecho' && m.category === 'nomina' && (m.date || '').slice(0, 4) === year).map(m => m.net));
   const all = (s.cuentasCobro || []).slice().sort((a, b) => b.ym.localeCompare(a.ym));
 
-  el.innerHTML = head('06', 'Equipo', 'Cada persona con sus cuentas de cobro y planillas de seguridad social por mes. Marcar una cuenta como pagada la registra en <b>Pagos del mes</b> y en el libro de <b>Movimientos</b>; los soportes quedan listos para la declaración de renta.', {
+  el.innerHTML = head('06', 'Equipo', 'Cuentas de cobro y planillas de cada persona, mes a mes.', {
     label: 'Nómina mensual del equipo activo', value: sum(active.map(t => Number(t.pay) || 0)), fmt: 'cop',
     sub: `${active.length} persona${active.length === 1 ? '' : 's'} activa${active.length === 1 ? '' : 's'}${inactive.length ? ` · ${inactive.length} en historial` : ''} · factor prestacional ${s.global.factorPrestacional}`,
     side: [
@@ -835,7 +835,7 @@ function renderPila() {
   const cur = pilaFind(ym);
   const rule = (s.alerts.rules || []).find(r => r.type === 'pila' && r.active !== false);
 
-  el.innerHTML = head('07', 'Seguridad social', 'Tus planillas PILA (salud, pensión, ARL, caja) mes a mes, con el comprobante adjunto. Cada planilla pagada entra al libro de <b>Movimientos</b> y suma al certificado de aportes que necesitás para la renta.', {
+  el.innerHTML = head('07', 'Seguridad social', 'Tus planillas PILA mes a mes, con el comprobante adjunto.', {
     label: `Aportes pagados en ${pilaYear}`, value: total, fmt: 'cop',
     sub: `${paid.length} de 12 meses con planilla pagada${paid.length ? ` · promedio ${fmtCOP(total / paid.length)} por mes` : ''}`,
     side: [
@@ -906,7 +906,7 @@ function renderRenta() {
     : { label: `Año gravable ${y} · ingresos brutos acumulados (libro)`, value: L.grossIn, fmt: 'cop', sub: `Retenciones que te practicaron ${fmtCOP(L.ret)} · pagos a contratistas ${fmtCOP(L.contractors)} · seguridad social ${fmtCOP(L.pila)}`,
         side: [{ label: 'Documentos listos', value: doneReq, fmt: 'int', sub: `de ${docsReq.length} obligatorios` }, { label: du == null ? 'Fecha límite' : du >= 0 ? 'Días para el límite' : 'Días de vencida', value: du == null ? 0 : Math.abs(du), fmt: 'int', cls: du != null && du < 30 ? 'neg' : '', sub: ry.deadline ? fmtDate(ry.deadline) + (ry.deadlineEstimated ? ' · estimada' : '') : 'sin definir' }] };
 
-  el.innerHTML = head('08', 'Renta', 'Todo lo que necesitás para la declaración de renta de cada año gravable en Colombia: la lista de documentos con su soporte adjunto, la fecha límite con alarma, y lo que este tablero ya te resuelve solo (ingresos, retenciones, pagos a contratistas, seguridad social).', fig) + `
+  el.innerHTML = head('08', 'Renta', 'Documentos, fecha límite y lo que el tablero ya resuelve para cada año gravable.', fig) + `
   <div class="ystrip mb-16">${years.map(yy => { const r = s.renta.years[yy]; return `<button class="ytab ${yy === y ? 'on' : ''}" data-act="renta:year" data-p="${yy}">${yy}<small>${r.status === 'presentada' ? 'presentada' : 'en curso'}</small></button>`; }).join('')}
     <button class="btn btn--ghost btn--sm" data-act="renta:add-year">${ico('plus')} Año</button></div>
 
@@ -969,7 +969,7 @@ function renderAlertas() {
   const crit = act.filter(a => a.sev === 'crit').length;
   const notif = ('Notification' in window) ? Notification.permission : 'unsupported';
 
-  el.innerHTML = head('09', 'Alertas', 'Las alarmas del tablero, todas parametrizables: fechas límite (renta, contratos), umbrales de caja o runway, la PILA del mes, las cuentas de cobro del equipo, los pagos pendientes y los cobros que se están demorando.', {
+  el.innerHTML = head('09', 'Alertas', 'Fechas, umbrales y pendientes que el tablero vigila por vos.', {
     label: 'Alertas activas hoy', value: act.length, fmt: 'int', cls: crit ? 'neg' : '',
     sub: crit ? `${crit} crítica${crit > 1 ? 's' : ''} · ${act.length - crit} de aviso` : act.length ? 'ninguna crítica' : 'todo en orden',
     side: [{ label: 'Reglas activas', value: rules.filter(r => r.active !== false).length, fmt: 'int', sub: `de ${rules.length}` }, { label: 'Silenciadas', value: all.length - act.length, fmt: 'int', sub: 'vuelven solas al vencer el silencio' }],

@@ -269,7 +269,7 @@ textarea { min-height: 72px; resize: vertical; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* Main */
-.main { max-width: 1240px; margin: 0 auto; padding: 96px 20px 130px; }
+.main { max-width: 1240px; margin: 0 auto; padding: 88px 20px 130px; }
 .view { display: none; }
 .view.active { display: block; animation: fade .4s var(--ease); }
 @keyframes fade { from { opacity: 0; transform: translateY(6px);} to {opacity:1;transform:none;} }
@@ -281,19 +281,19 @@ textarea { min-height: 72px; resize: vertical; }
 .foot-meta { margin-left: auto; }
 
 /* ============================================================== HERO (Big Type) */
-.hero { margin-bottom: 26px; }
+.hero { margin-bottom: 22px; }
 .hero-title {
   font-family: var(--font-display); font-weight: 800;
-  font-size: clamp(46px, 7.2vw, 92px); line-height: .92; letter-spacing: -.5px;
-  color: var(--cyprus); text-transform: uppercase; margin-top: 10px;
+  font-size: clamp(36px, 5vw, 60px); line-height: .94; letter-spacing: -.4px;
+  color: var(--cyprus); text-transform: uppercase; margin-top: 8px;
 }
-.hero .lead { color: var(--verde-72); font-size: 14.5px; margin-top: 12px; max-width: 720px; }
+.hero .lead { color: var(--verde-72); font-size: 14px; margin-top: 8px; max-width: 640px; line-height: 1.5; }
 /* La cifra protagonista nunca se parte ni se monta sobre las secundarias: el bloque principal toma
    su ancho natural y las cifras secundarias se acomodan al lado o bajan de fila. */
 .hero-fig {
-  position: relative; overflow: hidden; margin-top: 18px;
-  display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-end;
-  padding: 24px 26px; border-radius: var(--radius-lg);
+  position: relative; overflow: hidden; margin-top: 16px;
+  display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end;
+  padding: 20px 24px; border-radius: var(--radius-lg);
   background: linear-gradient(150deg, #01524d 0%, var(--cyprus) 55%, #00302e 100%);
   color: var(--crema); box-shadow: var(--shadow-dark);
 }
@@ -305,14 +305,15 @@ textarea { min-height: 72px; resize: vertical; }
 .hf-label { display: block; font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: var(--jade-3); }
 .hf-value {
   display: block; font-family: var(--font-display); font-weight: 800;
-  font-size: clamp(40px, 5.6vw, 76px); line-height: 1; letter-spacing: -.5px; color: var(--crema);
+  font-size: clamp(34px, 4.4vw, 58px); line-height: 1; letter-spacing: -.5px; color: var(--crema);
   font-variant-numeric: tabular-nums; margin-top: 6px; white-space: nowrap;
 }
 .hf-value.neg { color: #f2c6b1; }
 .hf-sub { display: block; font-size: 12.5px; color: rgba(240,237,229,0.74); margin-top: 8px; line-height: 1.45; }
-.hf-side { position: relative; z-index: 1; flex: 1 1 170px; min-width: 150px; max-width: 340px; padding-left: 16px; border-left: 1px solid rgba(240,237,229,0.16); }
+.hf-side { position: relative; z-index: 1; flex: 1 1 150px; min-width: 140px; max-width: 260px; padding-left: 16px; border-left: 1px solid rgba(240,237,229,0.16); }
 .hf-side .hf-label { max-width: 22ch; }
-.hf-num { display: block; font-family: var(--font-display); font-weight: 700; font-size: 30px; line-height: 1; color: var(--crema); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.hf-side:nth-child(n+5) { display: none; } /* máximo tres cifras secundarias: el resto vive en su propia vista */
+.hf-num { display: block; font-family: var(--font-display); font-weight: 700; font-size: 26px; line-height: 1; color: var(--crema); margin-top: 6px; font-variant-numeric: tabular-nums; }
 .hf-num.pos { color: var(--jade); }
 .hf-num.neg { color: #f2c6b1; }
 .hf-main { position: relative; z-index: 1; flex: 1 1 auto; max-width: 100%; }
@@ -332,7 +333,7 @@ textarea { min-height: 72px; resize: vertical; }
 .view-head .lead { color: var(--verde-72); font-size: 14.5px; margin-top: 8px; max-width: 760px; }
 
 /* ============================================================== GRID + CARDS */
-.grid { display: grid; gap: 18px; }
+.grid { display: grid; gap: 16px; }
 .g-2 { grid-template-columns: repeat(2, 1fr); }
 .g-3 { grid-template-columns: repeat(3, 1fr); }
 .g-4 { grid-template-columns: repeat(4, 1fr); }
@@ -363,32 +364,21 @@ textarea { min-height: 72px; resize: vertical; }
 .card.flat { box-shadow: none; }
 .card.flat:hover { transform: none; }
 .card-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.card-h h3 { font-size: 15px; font-weight: 800; color: var(--cyprus); letter-spacing: .2px; }
+.card-h h3 { font-size: 14px; font-weight: 800; color: var(--cyprus); letter-spacing: .2px; }
 .card-h .eyebrow { margin-bottom: 0; }
 .card-note { font-size: 12.5px; color: var(--verde-60); margin-top: 10px; line-height: 1.5; }
 
 /* ---- KPI ---- */
 .kpi { display: flex; flex-direction: column; gap: 7px; }
 .kpi .klabel { font-size: 11px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--verde-60); }
-.kpi .kval { font-family: var(--font-display); font-size: 36px; font-weight: 800; color: var(--cyprus); line-height: 1; letter-spacing: .2px; font-variant-numeric: tabular-nums; }
+.kpi .kval { font-family: var(--font-display); font-size: 30px; font-weight: 800; color: var(--cyprus); line-height: 1; letter-spacing: .2px; font-variant-numeric: tabular-nums; }
 .kpi .ksub { font-size: 12px; color: var(--verde-60); line-height: 1.4; }
 
-.kpi--dark {
-  background: linear-gradient(150deg, #014f4b 0%, var(--cyprus) 55%, #00302e 100%);
-  border: none; color: var(--crema); box-shadow: var(--shadow-dark); overflow: hidden;
-}
-.kpi--dark::before { display: none; }
-.kpi--dark::after {
-  content:''; position:absolute; inset: 0; pointer-events:none;
-  background: radial-gradient(260px 180px at var(--mx, 90%) var(--my, 0%), rgba(126,211,178,0.22), transparent 70%);
-}
-.kpi--dark .klabel { color: var(--jade-3); }
-.kpi--dark .kval { color: var(--crema); }
-.kpi--dark .ksub { color: rgba(240,237,229,0.72); }
-.kpi--dark .chip--ok { background: rgba(45,125,111,0.30); color: #bfe6da; }
-.kpi--dark .chip--ok .cdot { background: #6fd3bf; }
-.kpi--dark .chip--warn { background: rgba(184,92,56,0.32); color: #f2c6b1; }
-.kpi--dark .chip--warn .cdot { background: #e08a63; }
+/* Card destacada: la misma superficie clara con el acento Jade fijo. El bloque oscuro queda solo para el hero,
+   así cada vista tiene un único punto de peso visual y las cards no compiten entre sí. */
+.kpi--dark { background: var(--crema-2); }
+.kpi--dark::before { transform: scaleX(1); }
+.kpi--dark .klabel { color: var(--cyprus); }
 
 /* chips / states */
 .chip {
@@ -754,7 +744,7 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
   .toolbar { flex-direction: column; align-items: stretch; }
 }
 @media (max-width: 520px) {
-  .kpi .kval { font-size: 30px; }
+  .kpi .kval { font-size: 26px; }
   .main { padding: 76px 12px 116px; }
   .mgrid { grid-template-columns: repeat(2, 1fr); }
   .mstrip { grid-template-columns: repeat(3, 1fr); }
