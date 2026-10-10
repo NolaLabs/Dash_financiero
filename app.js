@@ -175,6 +175,9 @@ function compute(s) {
   const skNeto = (sk.received && Number(sk.receivedAmount) > 0) ? Number(sk.receivedAmount) : skBruto - skRet;
   const reserva = s.global.reserveMonths * opex;
   const fondoCrecimiento = skNeto - reserva;
+  // Inversiones fuera de los bancos (p. ej. broker en USD): no son caja, pero son patrimonio de la empresa
+  const inversionesUSD = Number(s.liquidity.inversionesUSD) || 0;
+  const inversionesCOP = inversionesUSD * (Number(s.global.trm) || 0);
 
   // --- Ingresos únicos esporádicos (proyectos puntuales, ej. un dash para un cliente)
   const oneOffs = Array.isArray(s.oneOffs) ? s.oneOffs : [];
@@ -215,7 +218,7 @@ function compute(s) {
     trm, clients, ingresosNetos, facturacionBruta, nominaBase, nomina, suscripciones, opex,
     ceoSalary, resultAntesCEO, resultOperativo, margen, selfFinances,
     breakEvenCEO, breakEvenNoCEO, nClients, avgNet, clientsToBE, maxClientNet, maxClientShare,
-    skBruto, skRet, skNeto, reserva, fondoCrecimiento,
+    skBruto, skRet, skNeto, reserva, fondoCrecimiento, inversionesUSD, inversionesCOP,
     oneOffs, oneOffsTotal, oneOffsPending, oneOffsReceived,
     runRate, metaProgress, realized, realizedPct,
     otherPersonalIncome, ingresosPersonales, expRows, gastosPersonales, resultPersonal,
@@ -540,9 +543,11 @@ function renderResumen() {
       <span class="ksub">Para cubrir tu vida: <b>${fmtShort(d.salaryToCoverLife)}</b>${gap > 0 ? ` · faltan ${fmtShort(gap)}` : ' · ya lo cubre'}</span>
     </div>
     <div class="card kpi--dark kpi">
-      <span class="klabel">Fondo de crecimiento</span>
+      ${d.inversionesUSD > 0 ? `<span class="klabel">Inversiones · fuera de los bancos</span>
+      <span class="kval">${fmtCOP(d.inversionesCOP)}</span>
+      <span class="ksub">USD ${d.inversionesUSD.toLocaleString('es-CO', { maximumFractionDigits: 2 })} a TRM ${fmtCOP(s.global.trm)}${s.liquidity.inversionesAt ? ' · cifra del ' + fmtDate(s.liquidity.inversionesAt) : ''}${s.liquidity.inversionesNota ? ' · ' + esc(s.liquidity.inversionesNota) : ''}. No cuenta como caja ni como reserva.</span>` : `<span class="klabel">Fondo de crecimiento</span>
       <span class="kval">${fmtCOP(d.fondoCrecimiento)}</span>
-      <span class="ksub">${s.skandia.received ? `Capital tras reserva · recibido${s.skandia.receivedAt ? ' el ' + s.skandia.receivedAt : ''}, ya en tu saldo` : 'Capital tras reserva. Aún no recibido'}</span>
+      <span class="ksub">${s.skandia.received ? `Capital tras reserva · recibido${s.skandia.receivedAt ? ' el ' + s.skandia.receivedAt : ''}, ya en tu saldo` : 'Capital tras reserva. Aún no recibido'}</span>`}
     </div>
   </div>
 
@@ -1065,6 +1070,7 @@ function renderEditor() {
     <div class="grid g-2">
       ${repeatField('Caja EMPRESA disponible hoy', s.liquidity.cajaEmpresaHoy, 'liquidity.cajaEmpresaHoy')}
       ${repeatField('Ahorros PERSONALES hoy', s.liquidity.ahorrosPersonalesHoy, 'liquidity.ahorrosPersonalesHoy')}
+      ${repeatField('Inversiones fuera de los bancos (USD, p. ej. broker)', s.liquidity.inversionesUSD || 0, 'liquidity.inversionesUSD')}
     </div>
     ${s.liquidity.cajaEmpresaHoy === 0 ? `<div class="warnbox">⚠ Completá el saldo real de la cuenta de la empresa hoy — afecta tu reserva y tu score.</div>` : ''}
   </div>
@@ -1498,6 +1504,7 @@ function migrate(st) {
   // saldos: coercer a número (un respaldo editado a mano con strings concatenaría en el transfer)
   st.liquidity.cajaEmpresaHoy = Number(st.liquidity.cajaEmpresaHoy) || 0;
   st.liquidity.ahorrosPersonalesHoy = Number(st.liquidity.ahorrosPersonalesHoy) || 0;
+  st.liquidity.inversionesUSD = Number(st.liquidity.inversionesUSD) || 0;
   // pagos del mes: estructura { months: { "YYYY-MM": { paid: { <key>: {amount, at, applied} } } } }
   if (!st.payments || typeof st.payments !== 'object' || Array.isArray(st.payments)) st.payments = { months: {} };
   if (!st.payments.months || typeof st.payments.months !== 'object' || Array.isArray(st.payments.months)) st.payments.months = {};

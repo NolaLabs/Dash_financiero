@@ -233,7 +233,7 @@ function parseBancolombia(rows) {
 }
 
 /* ========================================================= CLASIFICACIÓN */
-const BANK_SUBCATS = { transporte: 'Transporte', mercado: 'Mercado', restaurantes: 'Restaurantes y domicilios', compras: 'Compras', suscripciones: 'Suscripciones y apps', salud: 'Salud y bienestar', hogar: 'Hogar y servicios', nequi: 'Nequi (salidas a tu billetera)', efectivo: 'Efectivo', deuda: 'Deuda', bancario: 'Bancario', viajes: 'Viajes', educacion: 'Educación', otros: 'Otros' };
+const BANK_SUBCATS = { transporte: 'Transporte', mercado: 'Mercado', restaurantes: 'Restaurantes y domicilios', compras: 'Compras', suscripciones: 'Suscripciones y apps', salud: 'Salud y bienestar', hogar: 'Hogar y servicios', nequi: 'Nequi (salidas a tu billetera)', efectivo: 'Efectivo', inversion: 'Inversiones', deuda: 'Deuda', bancario: 'Bancario', viajes: 'Viajes', educacion: 'Educación', otros: 'Otros' };
 // Reglas genéricas (comercios y descriptores comunes). Las reglas con nombres propios (clientes, empleador) se crean
 // desde el importador y se guardan en la nube. Orden: la primera que coincide gana.
 function defaultBankRules() {
