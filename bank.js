@@ -101,8 +101,41 @@ async function readPdfLines(file, password) {
 }
 function bankDetectFormat(file, sample) {
   if (/\.xlsx$/i.test(file.name)) return 'bancolombia-xlsx';
-  if (/\.pdf$/i.test(file.name)) { const t = (sample || []).join(' '); if (/NEQUI S\.A\./i.test(t)) return 'nequi-pdf'; if (/Cuenta Nu|Nu Placa|Nu Financiera/i.test(t)) return 'nu-pdf'; }
+  if (/\.pdf$/i.test(file.name)) {
+    const t = (sample || []).join(' ');
+    if (/NEQUI S\.A\./i.test(t)) return 'nequi-pdf';
+    if (/Cuenta Nu|Nu Placa|Nu Financiera/i.test(t)) return 'nu-pdf';
+    if (/ESTADO DE CUENTA/i.test(t) && /SALDO ANTERIOR/i.test(t) && /DESDE:/i.test(t)) return 'bancolombia-pdf';
+  }
   return null;
+}
+// Extracto PDF de Bancolombia ("ESTADO DE CUENTA" trimestral): resumen + filas "D/MM DESCRIPCIÓN [SUCURSAL] VALOR SALDO"
+const bcPdfAmt = s => { const n = parseFloat(String(s).replace(/,/g, '')); return isFinite(n) ? n : null; };
+const BC_BRANCHES = ['CENTRO COMERCIAL PALATINO', 'CENTRO COMERCIAL', 'SUCURSAL VIRTUAL'];
+function parseBancolombiaPdf(lines) {
+  const all = lines.join('\n');
+  const pm = /DESDE:\s*(\d{4})\/(\d{2})\/(\d{2})\s+HASTA:\s*(\d{4})\/(\d{2})\/(\d{2})/i.exec(all);
+  if (!pm) throw userErr('No encontré el período (DESDE / HASTA) del extracto de Bancolombia.');
+  const period = { from: `${pm[1]}-${pm[2]}-${pm[3]}`, to: `${pm[4]}-${pm[5]}-${pm[6]}` };
+  const am = /N[ÚU]MERO\s+(\d{6,})/i.exec(all); const acct = am ? am[1] : '';
+  const lab = re => { const m = re.exec(all); return m ? bcPdfAmt(m[1]) : null; };
+  const summary = { prev: lab(/SALDO ANTERIOR\s*\$?\s*(-?[\d,]*\.\d{2})/i), credits: lab(/TOTAL ABONOS\s*\$?\s*(-?[\d,]*\.\d{2})/i), debits: lab(/TOTAL CARGOS\s*\$?\s*(-?[\d,]*\.\d{2})/i), final: lab(/SALDO ACTUAL\s*\$?\s*(-?[\d,]*\.\d{2})/i) };
+  const movs = [];
+  lines.forEach(ln => {
+    const m = /^(\d{1,2})\/(\d{2})\s+(.+?)\s+(-?[\d,]*\.\d{2})\s+(-?[\d,]*\.\d{2})$/.exec(ln.trim());
+    if (!m) return;
+    const [d, mo] = [+m[1], +m[2]]; if (!(d >= 1 && d <= 31 && mo >= 1 && mo <= 12)) return;
+    let year = +period.to.slice(0, 4); if (mo > +period.to.slice(5, 7)) year -= 1; // extracto que cruza de diciembre a enero
+    let desc = m[3].replace(/\s+/g, ' ').trim(); let ref = '';
+    for (const b of BC_BRANCHES) { if (desc.toUpperCase().endsWith(' ' + b)) { ref = b; desc = desc.slice(0, -b.length).trim(); break; } } // la sucursal va aparte, como en el XLSX
+    movs.push({ date: `${year}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, desc, ref, amount: bcPdfAmt(m[4]), balance: bcPdfAmt(m[5]) });
+  });
+  if (!movs.length) throw userErr('No encontré movimientos en el extracto PDF de Bancolombia.');
+  let prev = summary.prev, bad = 0;
+  if (prev != null) movs.forEach(mv => { if (mv.balance != null && Math.abs(prev + mv.amount - mv.balance) > 0.011) bad++; prev = mv.balance != null ? mv.balance : prev + mv.amount; });
+  const ins = movs.filter(x => x.amount > 0).reduce((a, x) => a + x.amount, 0), outs = movs.filter(x => x.amount < 0).reduce((a, x) => a - x.amount, 0);
+  const sumsOk = summary.credits == null || (Math.abs(ins - summary.credits) < 1 && Math.abs(outs - summary.debits) < 1);
+  return { bank: 'Bancolombia', acct, acctLast4: acct.slice(-4), holder: '', period, summary, movs, balanceOk: prev != null && bad === 0 && sumsOk };
 }
 
 /* ========================================================= PARSER NU (PDF) */
@@ -219,6 +252,8 @@ function defaultBankRules() {
     R('EDS TERPEL', { type: 'egreso', category: 'gasto_personal', subcat: 'transporte', party: 'Gasolina · Terpel' }),
     R('WORLD VISION', { type: 'egreso', category: 'gasto_personal', subcat: 'otros', party: 'World Vision (donación)' }),
     R('DEBITO POR ABONO CARTERA', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (cuota)' }),
+    R('ABONO MORA OBLIGACION', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (mora)' }),
+    R('ABONO OBLIGACION', { type: 'egreso', category: 'deuda', subcat: 'deuda', party: 'Crédito (abono)' }),
     R('NU COMPANIA', { type: 'auto', category: 'transferencia', party: 'Cuenta Nu (propia)' }),
     R('COMPENSAR', { type: 'egreso', category: 'seguridad_social', party: 'Compensar (PILA)' }),
     R('APORTES EN LINEA', { type: 'egreso', category: 'seguridad_social', party: 'Aportes en Línea (PILA)' }),
@@ -293,8 +328,14 @@ const matchTeam = desc => matchByName(desc, S.team, t => t.name);
 // Transferencias sin nombre: se reconocen por el monto (cuenta de cobro del mes, pago del equipo, licencia o gasto fijo)
 function matchAmount(mv) {
   const amt = Math.abs(mv.amount), ym = ymOf(mv.date), near = [addMonths(ym, -1), ym, addMonths(ym, 1)];
-  const cc = (S.cuentasCobro || []).find(c => Math.abs((Number(c.amount) || 0) - amt) < 1 && near.includes(c.ym));
-  if (cc) { const t = S.team.find(x => x.id === cc.personId); if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name + ' · cuenta ' + ymShort(cc.ym), review: false, teamId: t.id, ccId: cc.id, ccYm: cc.ym }; }
+  // primero la cuenta del mismo mes, y entre varias la que aún no está pagada (la de septiembre no debe caer sobre la de agosto ya pagada)
+  const cc = (S.cuentasCobro || []).filter(c => Math.abs((Number(c.amount) || 0) - amt) < 1 && near.includes(c.ym))
+    .sort((a, b) => ((a.ym === ym ? 0 : 1) - (b.ym === ym ? 0 : 1)) || ((a.status === 'pagada' ? 1 : 0) - (b.status === 'pagada' ? 1 : 0)))[0];
+  if (cc) {
+    const t = S.team.find(x => x.id === cc.personId);
+    if (t && cc.status === 'pagada' && cc.ym !== ym) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name + ' · cuenta ' + ymShort(ym), review: false, teamId: t.id, ccId: null, ccYm: ym }; // la de ese mes ya está pagada: este pago es de la cuenta del mes del pago (se crea al importar)
+    if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name + ' · cuenta ' + ymShort(cc.ym), review: false, teamId: t.id, ccId: cc.id, ccYm: cc.ym };
+  }
   const t = (S.team || []).find(x => Math.abs((Number(x.pay) || 0) - amt) < 1 && amt > 0);
   if (t) return { type: 'egreso', category: 'nomina', subcat: null, party: t.name, review: true, teamId: t.id };
   const l = (S.licenses || []).find(x => x.currency === 'COP' && Math.abs((Number(x.unit) || 0) * (Number(x.qty) || 1) - amt) < 1);
@@ -334,7 +375,7 @@ function bankClassify(mv, side) {
   if (!inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) { const byAmt = matchAmount(mv); if (byAmt) return byAmt; return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: 'Transferencia a cuenta Bancolombia', review: true }; }
   if (inc && /^TRANSFERENCIA CTA SUC VIRTUAL$/i.test(mv.desc)) return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Transferencia desde cuenta Bancolombia', review: true };
   // Bancolombia ↔ Nequi: "TRANSFERENCIAS A NEQUI" no dice a quién. Es cuenta propia solo si el libro ya tiene la recarga equivalente del Nequi propio (mismo monto, ±1 día); si no, es plata enviada al Nequi de otra persona
-  if (!inc && /^TRANSFERENCIAS? A NEQUI$/i.test(mv.desc)) { if (nequiTwin(mv)) return { type: 'egreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi (cuenta propia)', review: false }; return { type: 'egreso', category: 'gasto_personal', subcat: 'otros', party: 'Envío al Nequi de otra persona', review: Math.abs(mv.amount) >= 100000 }; }
+  if (!inc && /^TRANSFERENCIAS? A NEQUI$/i.test(mv.desc)) { if (nequiTwin(mv)) return { type: 'egreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi (cuenta propia)', review: false }; const byAmt = matchAmount(mv); if (byAmt) return Object.assign(byAmt, { party: byAmt.party + ' (por Nequi)' }); return { type: 'egreso', category: 'gasto_personal', subcat: 'otros', party: 'Envío al Nequi de otra persona', review: Math.abs(mv.amount) >= 100000 }; } // el equipo también cobra por Nequi: el monto de la cuenta de cobro lo identifica
   if (inc && /^TRANSFERENCIA DESDE NEQUI$/i.test(mv.desc)) { if (nequiTwin(mv)) return { type: 'ingreso', category: 'transferencia', subcat: 'nequi', party: 'Nequi (cuenta propia)', review: false }; return { type: 'ingreso', category: 'otro_ingreso', subcat: null, party: 'Recibido desde el Nequi de otra persona', review: true }; }
   // descriptores estructurados
   let m;
@@ -351,7 +392,7 @@ function bankClassify(mv, side) {
   if ((m = /^Compra en\s+(.+?)(?:\s+con tarjeta.*)?$/i.exec(mv.desc))) return { type: 'egreso', category: 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: side === 'empresa' }; // desde la cuenta empresa: confirmá si fue gasto del negocio (proveedores)
   if ((m = /^PAGO INTERBANC\s+(.+)$/i.exec(mv.desc)) || (m = /^PAGO DE PROV\s+(.+)$/i.exec(mv.desc))) return { type: inc ? 'ingreso' : 'egreso', category: inc ? 'cliente' : 'proveedores', subcat: null, party: m[1].trim(), review: true };
   if ((m = /^TRANSF DE\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); return { type: 'ingreso', category: own ? 'transferencia' : 'otro_ingreso', subcat: null, party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; }
-  if ((m = /^TRANSF A\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); if (!own) { const byAmt = matchAmount(mv); if (byAmt) return Object.assign(byAmt, { party: byAmt.party + ' (' + m[1].trim() + ')' }); } return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? null : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: true }; }
+  if ((m = /^TRANSF A\s+(.+)$/i.exec(mv.desc))) { const own = looksLikeOwner(m[1]); if (!own) { const byAmt = matchAmount(mv); if (byAmt) return Object.assign(byAmt, { party: byAmt.party + ' (' + m[1].trim() + ')' }); } return { type: 'egreso', category: own ? 'transferencia' : (side === 'empresa' ? 'proveedores' : 'gasto_personal'), subcat: own ? 'nequi' : 'otros', party: own ? 'Cuenta propia' : m[1].trim(), review: !own }; } // a tu propia cuenta (Nu) no hay nada que revisar
   if ((m = /^TRANSFERENCIA A\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: m[1].trim(), review: true };
   if ((m = /^COMPRA (?:EN|INTL)\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'compras', party: m[1].trim(), review: false };
   if ((m = /^PAGO PSE\s+(.+)$/i.exec(mv.desc))) return { type: 'egreso', category: side === 'empresa' ? 'proveedores' : 'gasto_personal', subcat: 'otros', party: m[1].trim(), review: true };
@@ -384,7 +425,8 @@ async function bankImportFile(file, opts = {}) {
     const fmt = bankDetectFormat(file, lines);
     if (fmt === 'nu-pdf') parsed = parseNu(lines);
     else if (fmt === 'nequi-pdf') parsed = parseNequi(lines);
-    else throw userErr('No reconozco este PDF. Por ahora se importan los extractos PDF de Nu y Nequi, y el XLSX de Bancolombia.');
+    else if (fmt === 'bancolombia-pdf') parsed = parseBancolombiaPdf(lines);
+    else throw userErr('No reconozco este PDF. Se importan los extractos PDF de Bancolombia, Nu y Nequi, y el XLSX de Bancolombia.');
   } else throw userErr('Formato no soportado: subí el XLSX de Bancolombia o los PDF de Nu y Nequi.');
   const acc = bankAccounts()[parsed.acctLast4];
   const side = acc ? acc.side : 'personal';
